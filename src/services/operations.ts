@@ -8,6 +8,11 @@ import * as s from "@/db/schema";
 import { type Actor, authorize } from "@/lib/permissions";
 import { amount, quantity, orderSchema } from "@/lib/validation";
 import { discountedLineTotal } from "@/lib/money";
+import {
+  laborAction,
+  bindLatestRouting,
+  requireRoutingOutput,
+} from "@/services/labor";
 import { cuttingAction, cuttingCompletion } from "@/services/cutting";
 import {
   planRolls,
@@ -34,6 +39,10 @@ export function lineTotal(
   return discountedLineTotal(q, p, discount);
 }
 export const actions = [
+  "saveRouting",
+  "bindRouting",
+  "startOperation",
+  "finishOperation",
   "createCutting",
   "completeCutting",
   "cancelCutting",
@@ -62,6 +71,10 @@ export const actions = [
 ] as const;
 export type BusinessAction = (typeof actions)[number];
 const resources: Record<BusinessAction, string> = {
+  saveRouting: "manufacturing",
+  bindRouting: "manufacturing",
+  startOperation: "manufacturing",
+  finishOperation: "manufacturing",
   createCutting: "manufacturing",
   completeCutting: "manufacturing",
   cancelCutting: "manufacturing",
@@ -197,6 +210,15 @@ export async function execute(
       .insert(s.operations)
       .values({ key, fingerprint, actorId: actor.id });
     if (
+      [
+        "saveRouting",
+        "bindRouting",
+        "startOperation",
+        "finishOperation",
+      ].includes(action)
+    ) {
+      await laborAction(tx, action, input, actor.id);
+    } else if (
       ["createCutting", "completeCutting", "cancelCutting"].includes(action)
     ) {
       await cuttingAction(tx, action, input, actor.id);
@@ -722,18 +744,22 @@ export async function execute(
             );
         }
       }
-      await tx.insert(s.manufacturing).values({
-        number: number("MO"),
-        variantId: bom.variantId,
-        bomId: bom.id,
-        specificationId: spec.id,
-        brandingVersionId: branding?.id,
-        warehouseId: warehouse.id,
-        quantity: v.quantity,
-        saleItemId: v.saleItemId || null,
-        dueDate: v.dueDate,
-        notes: v.notes,
-      });
+      const [createdOrder] = await tx
+        .insert(s.manufacturing)
+        .values({
+          number: number("MO"),
+          variantId: bom.variantId,
+          bomId: bom.id,
+          specificationId: spec.id,
+          brandingVersionId: branding?.id,
+          warehouseId: warehouse.id,
+          quantity: v.quantity,
+          saleItemId: v.saleItemId || null,
+          dueDate: v.dueDate,
+          notes: v.notes,
+        })
+        .returning();
+      await bindLatestRouting(tx, createdOrder);
     } else if (
       ["plan", "start", "record", "complete", "cancelProduction"].includes(
         action,
@@ -846,6 +872,11 @@ export async function execute(
           .set({ status: "In Progress" })
           .where(eq(s.manufacturing.id, id));
       } else if (action === "record") {
+        await requireRoutingOutput(
+          tx,
+          mo,
+          Number((input as Record<string, unknown>).completed),
+        );
         const v = z
           .object({
             completed: z.coerce.number().int().nonnegative(),
@@ -866,6 +897,11 @@ export async function execute(
           .where(eq(s.manufacturing.id, id));
       } else if (action === "complete") {
         if (mo.status === "Completed") return;
+        await requireRoutingOutput(
+          tx,
+          mo,
+          Number((input as Record<string, unknown>).approved),
+        );
         input = await cuttingCompletion(tx, mo.id, input);
         if (mo.status !== "Quality Control")
           throw new Error("Production must pass through quality control");

@@ -655,6 +655,68 @@ export const brandingFiles = pgTable(
 );
 
 export type FabricSegment = { start: string; end: string };
+export type RoutingStep = { name: string; minutes: string };
+export const productionRoutings = pgTable(
+  "production_routings",
+  {
+    id: id(),
+    productId: uuid("product_id")
+      .notNull()
+      .references(() => products.id),
+    version: integer().notNull(),
+    steps: jsonb().$type<RoutingStep[]>().notNull(),
+    createdBy: uuid("created_by")
+      .notNull()
+      .references(() => users.id),
+    createdAt: time(),
+  },
+  (t) => [uniqueIndex("product_routing_version").on(t.productId, t.version)],
+);
+export const orderRoutings = pgTable("order_routings", {
+  id: id(),
+  orderId: uuid("order_id")
+    .notNull()
+    .unique()
+    .references(() => manufacturing.id),
+  routingId: uuid("routing_id")
+    .notNull()
+    .references(() => productionRoutings.id),
+  steps: jsonb().$type<RoutingStep[]>().notNull(),
+  createdAt: time(),
+});
+export const laborEntries = pgTable(
+  "labor_entries",
+  {
+    id: id(),
+    orderRoutingId: uuid("order_routing_id")
+      .notNull()
+      .references(() => orderRoutings.id),
+    sequence: integer().notNull(),
+    employeeId: uuid("employee_id")
+      .notNull()
+      .references(() => employees.id),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
+    endedAt: timestamp("ended_at", { withTimezone: true }),
+    completed: integer().notNull().default(0),
+    rejected: integer().notNull().default(0),
+    notes: text().notNull().default(""),
+    createdBy: uuid("created_by")
+      .notNull()
+      .references(() => users.id),
+  },
+  (t) => [
+    check(
+      "labor_quantities",
+      sql`${t.sequence}>=0 and ${t.completed}>=0 and ${t.rejected}>=0 and (${t.endedAt} is null or ${t.endedAt}>=${t.startedAt})`,
+    ),
+    uniqueIndex("employee_one_active_operation")
+      .on(t.employeeId)
+      .where(sql`${t.endedAt} is null`),
+    uniqueIndex("operation_one_active_session")
+      .on(t.orderRoutingId, t.sequence)
+      .where(sql`${t.endedAt} is null`),
+  ],
+);
 export const cuttingBatches = pgTable(
   "cutting_batches",
   {

@@ -121,6 +121,119 @@ async function production(quantity = 10) {
   return mo;
 }
 describe("Critical PostgreSQL workflows", () => {
+  it("preserves routing versions and constrains labor to predecessor accepted output", async () => {
+    const [v] = await db()
+      .select()
+      .from(s.variants)
+      .where(eq(s.variants.id, variant));
+    await act("saveRouting", {
+      productId: v.productId,
+      steps: [
+        { name: "Sewing", minutes: "25" },
+        { name: "Inspection", minutes: "5" },
+      ],
+    });
+    await stock();
+    const mo = await production(10);
+    const [fixed] = await db()
+      .select()
+      .from(s.orderRoutings)
+      .where(eq(s.orderRoutings.orderId, mo.id));
+    await act("saveRouting", {
+      productId: v.productId,
+      steps: [{ name: "Sewing", minutes: "30" }],
+    });
+    expect((await db().select().from(s.orderRoutings))[0].steps).toEqual(
+      fixed.steps,
+    );
+    const [employee] = await db()
+      .insert(s.employees)
+      .values({ name: "Operator" })
+      .returning();
+    await act("plan", { id: mo.id });
+    await act("start", { id: mo.id });
+    await expect(
+      act("startOperation", {
+        id: mo.id,
+        sequence: 1,
+        employeeId: employee.id,
+      }),
+    ).rejects.toThrow();
+    const key = randomUUID(),
+      start = { id: mo.id, sequence: 0, employeeId: employee.id };
+    await act("startOperation", start, key);
+    await act("startOperation", start, key);
+    expect((await db().select().from(s.laborEntries)).length).toBe(1);
+    await expect(
+      act("finishOperation", {
+        id: mo.id,
+        sequence: 0,
+        completed: 11,
+        rejected: 0,
+      }),
+    ).rejects.toThrow("applicable");
+    await act("finishOperation", {
+      id: mo.id,
+      sequence: 0,
+      completed: 3,
+      rejected: 0,
+    });
+    await expect(
+      act("startOperation", {
+        id: mo.id,
+        sequence: 1,
+        employeeId: employee.id,
+      }),
+    ).rejects.toThrow();
+    await act("startOperation", start);
+    await act("finishOperation", {
+      id: mo.id,
+      sequence: 0,
+      completed: 5,
+      rejected: 2,
+    });
+    await expect(
+      act("record", { id: mo.id, completed: 8, defective: 2 }),
+    ).rejects.toThrow("operations");
+    await act("startOperation", {
+      id: mo.id,
+      sequence: 1,
+      employeeId: employee.id,
+    });
+    await expect(
+      act("finishOperation", {
+        id: mo.id,
+        sequence: 1,
+        completed: 9,
+        rejected: 0,
+      }),
+    ).rejects.toThrow("applicable");
+    await act("finishOperation", {
+      id: mo.id,
+      sequence: 1,
+      completed: 8,
+      rejected: 0,
+    });
+    await expect(
+      act("record", { id: mo.id, completed: 9, defective: 1 }),
+    ).rejects.toThrow("operations");
+    await act("record", { id: mo.id, completed: 8, defective: 2 });
+    await act("complete", { id: mo.id, approved: 8 });
+    const logs = await db().select().from(s.laborEntries);
+    expect(logs.every((e) => e.endedAt && e.endedAt >= e.startedAt)).toBe(true);
+    await expect(
+      db()
+        .update(s.laborEntries)
+        .set({ completed: 100 })
+        .where(eq(s.laborEntries.id, logs[0].id)),
+    ).rejects.toThrow();
+    await expect(
+      db()
+        .update(s.orderRoutings)
+        .set({ steps: [] })
+        .where(eq(s.orderRoutings.id, fixed.id)),
+    ).rejects.toThrow();
+  });
   it("completes a fully discounted order without requiring an impossible zero payment", async () => {
     await act("adjust", {
       itemId: variant,
