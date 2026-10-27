@@ -206,6 +206,10 @@ export const sales = pgTable(
     customerId: uuid("customer_id")
       .notNull()
       .references(() => customers.id),
+    quotationId: uuid("quotation_id")
+      .unique()
+      .references(() => quotations.id),
+    pricingApprovedBy: uuid("pricing_approved_by").references(() => users.id),
     status: text().notNull().default("Draft"),
     currency: text().notNull().default("UZS"),
     deliveryDate: text("delivery_date"),
@@ -231,6 +235,10 @@ export const saleItems = pgTable(
       .references(() => variants.id),
     quantity: integer().notNull(),
     price: money("price"),
+    pricingSnapshot: jsonb("pricing_snapshot")
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default({}),
     discount: money("discount"),
     brandingTotal: money("branding_total"),
     reserved: integer().notNull().default(0),
@@ -655,6 +663,88 @@ export const brandingFiles = pgTable(
 );
 
 export type FabricSegment = { start: string; end: string };
+export type PriceTier = {
+  minQty: number;
+  mode: "Price" | "Discount";
+  value: string;
+};
+export type QuotationLine = {
+  itemId: string;
+  quantity: number;
+  price: string;
+  discount: string;
+  snapshot: Record<string, unknown>;
+};
+export const pricingRules = pgTable(
+  "pricing_rules",
+  {
+    id: id(),
+    name: text().notNull(),
+    kind: text().notNull(),
+    customerId: uuid("customer_id").references(() => customers.id),
+    variantId: uuid("variant_id")
+      .notNull()
+      .references(() => variants.id),
+    currency: text().notNull(),
+    startDate: text("start_date").notNull(),
+    endDate: text("end_date").notNull(),
+    minimum: integer().notNull(),
+    tiers: jsonb().$type<PriceTier[]>().notNull(),
+    version: integer().notNull(),
+    status: text().notNull().default("Draft"),
+    createdBy: uuid("created_by")
+      .notNull()
+      .references(() => users.id),
+    approvedBy: uuid("approved_by").references(() => users.id),
+    createdAt: time(),
+  },
+  (t) => [
+    check(
+      "pricing_rule_valid",
+      sql`${t.kind} in ('Contract','Customer','Volume','Standard') and ${t.currency} in ('UZS','USD') and ${t.minimum}>0 and ${t.startDate}<=${t.endDate} and ${t.status} in ('Draft','Approved','Rejected') and (${t.status}='Approved')=(${t.approvedBy} is not null) and ((${t.kind} in ('Contract','Customer'))=(${t.customerId} is not null))`,
+    ),
+  ],
+);
+export const pricingRetirements = pgTable("pricing_retirements", {
+  id: id(),
+  ruleId: uuid("rule_id")
+    .notNull()
+    .unique()
+    .references(() => pricingRules.id),
+  effectiveDate: text("effective_date").notNull(),
+  reason: text().notNull(),
+  createdBy: uuid("created_by")
+    .notNull()
+    .references(() => users.id),
+  createdAt: time(),
+});
+export const quotations = pgTable(
+  "quotations",
+  {
+    id: id(),
+    number: text().notNull().unique(),
+    customerId: uuid("customer_id")
+      .notNull()
+      .references(() => customers.id),
+    currency: text().notNull(),
+    validUntil: text("valid_until").notNull(),
+    status: text().notNull().default("Draft"),
+    lines: jsonb().$type<QuotationLine[]>().notNull(),
+    total: money("total"),
+    notes: text().notNull().default(""),
+    createdBy: uuid("created_by")
+      .notNull()
+      .references(() => users.id),
+    approvedBy: uuid("approved_by").references(() => users.id),
+    createdAt: time(),
+  },
+  (t) => [
+    check(
+      "quotation_status",
+      sql`${t.status} in ('Draft','Approved','Rejected','Converted') and ${t.total}>=0 and (${t.status} in ('Approved','Converted'))=(${t.approvedBy} is not null)`,
+    ),
+  ],
+);
 export const subcontractors = pgTable(
   "subcontractors",
   {

@@ -14,6 +14,7 @@ import { saveMaster } from "../src/services/master";
 import { overview } from "../src/services/queries";
 import type { Actor } from "../src/lib/permissions";
 import { approvedSpec } from "./spec-fixture";
+import { pricingDay } from "../src/services/pricing";
 process.env.PGLITE_DATA_DIR = ":memory:";
 delete process.env.DATABASE_URL;
 let actor: Actor,
@@ -121,6 +122,176 @@ async function production(quantity = 10) {
   return mo;
 }
 describe("Critical PostgreSQL workflows", () => {
+  it("can replace a future price version withdrawn before its start date", async () => {
+    const rule = {
+      name: "Future standard",
+      kind: "Standard",
+      variantId: variant,
+      currency: "UZS",
+      startDate: "2098-01-01",
+      endDate: "2099-12-31",
+      minimum: 1,
+      tiers: [{ minQty: 1, mode: "Price", value: "100" }],
+    };
+    await act("savePricingRule", rule);
+    const [old] = await db().select().from(s.pricingRules);
+    await act("approvePricingRule", { id: old.id });
+    await act("retirePricingRule", {
+      id: old.id,
+      effectiveDate: pricingDay(),
+      reason: "Withdraw future release",
+    });
+    await act("savePricingRule", {
+      ...rule,
+      name: "Current replacement",
+      startDate: "2020-01-01",
+    });
+    const replacement = (await db().select().from(s.pricingRules)).find(
+      (r) => r.status === "Draft",
+    )!;
+    await act("approvePricingRule", { id: replacement.id });
+    expect(
+      (await db().select().from(s.pricingRules)).filter(
+        (r) => r.status === "Approved",
+      ).length,
+    ).toBe(2);
+  });
+  it("requires administrator authorization for manual pricing exceptions and records catalog price changes", async () => {
+    await act("sale", {
+      partyId: customer,
+      currency: "UZS",
+      lines: [{ itemId: variant, quantity: "2", price: "1", discount: "0" }],
+    });
+    const [o] = await db().select().from(s.sales);
+    await expect(
+      execute(
+        { ...actor, role: "sales" },
+        "confirmSale",
+        { id: o.id },
+        randomUUID(),
+      ),
+    ).rejects.toThrow("administrator");
+    expect((await db().select().from(s.sales))[0].status).toBe("Draft");
+    await act("confirmSale", { id: o.id });
+    expect((await db().select().from(s.sales))[0].pricingApprovedBy).toBe(
+      actor.id,
+    );
+    const [v] = await db()
+      .select()
+      .from(s.variants)
+      .where(eq(s.variants.id, variant));
+    await saveMaster(
+      actor,
+      "variants",
+      {
+        productId: v.productId,
+        sku: v.sku,
+        size: v.size,
+        color: v.color,
+        fabric: v.fabric ?? "",
+        cost: v.cost,
+        price: "125",
+      },
+      v.id,
+    );
+    const events = await db()
+      .select()
+      .from(s.audit)
+      .where(eq(s.audit.action, "catalog-price-change"));
+    expect(events.length).toBe(1);
+    expect((events[0].details as Record<string, unknown>).before).toBe(
+      "100.00",
+    );
+  });
+  it("approves B2B quotations and freezes converted sales and invoice amounts across price changes", async () => {
+    const input = {
+      name: "Jacket wholesale",
+      kind: "Volume",
+      variantId: variant,
+      currency: "UZS",
+      startDate: "2020-01-01",
+      endDate: "2099-12-31",
+      minimum: 1,
+      tiers: [
+        { minQty: 1, mode: "Price", value: "180000" },
+        { minQty: 50, mode: "Price", value: "165000" },
+        { minQty: 200, mode: "Price", value: "150000" },
+      ],
+    };
+    await act("savePricingRule", input);
+    const [r] = await db().select().from(s.pricingRules);
+    await expect(
+      execute(
+        { ...actor, role: "sales" },
+        "approvePricingRule",
+        { id: r.id },
+        randomUUID(),
+      ),
+    ).rejects.toThrow("permission");
+    await act("approvePricingRule", { id: r.id });
+    await act("savePricingRule", { ...input, name: "Conflicting duplicate" });
+    const other = (await db().select().from(s.pricingRules)).find(
+      (p) => p.status === "Draft",
+    )!;
+    await expect(act("approvePricingRule", { id: other.id })).rejects.toThrow(
+      "Overlapping",
+    );
+    await act("createQuotation", {
+      customerId: customer,
+      currency: "UZS",
+      validUntil: "2027-01-01",
+      lines: [{ itemId: variant, quantity: 50 }],
+    });
+    const [q] = await db().select().from(s.quotations);
+    expect(q.total).toBe("8250000.00");
+    await act("approveQuotation", { id: q.id });
+    const key = randomUUID();
+    await act("convertQuotation", { id: q.id }, key);
+    await act("convertQuotation", { id: q.id }, key);
+    const [order] = await db().select().from(s.sales);
+    const [line] = await db().select().from(s.saleItems);
+    expect(line.price).toBe("165000.00");
+    expect(line.pricingSnapshot.quotationId).toBe(q.id);
+    await act("confirmSale", { id: order.id });
+    await expect(
+      db()
+        .update(s.saleItems)
+        .set({ price: "1" })
+        .where(eq(s.saleItems.id, line.id)),
+    ).rejects.toThrow();
+    await act("retirePricingRule", {
+      id: r.id,
+      effectiveDate: pricingDay(),
+      reason: "New wholesale terms",
+    });
+    await act("savePricingRule", {
+      ...input,
+      startDate: pricingDay(),
+      tiers: [{ minQty: 1, mode: "Price", value: "190000" }],
+    });
+    const fresh = (await db().select().from(s.pricingRules)).find(
+      (p) => p.status === "Draft" && p.name === input.name,
+    )!;
+    await act("approvePricingRule", { id: fresh.id });
+    expect((await db().select().from(s.sales))[0].total).toBe("8250000.00");
+    await act("adjust", {
+      itemId: variant,
+      kind: "variant",
+      delta: "50",
+      reason: "Finished test garments",
+    });
+    await act("reserveSale", { id: order.id });
+    await act("ship", { id: order.id, lines: [{ id: line.id, quantity: 50 }] });
+    await act("invoice", { id: order.id, dueDate: "2027-01-01", taxRate: "0" });
+    const [invoice] = await db().select().from(s.invoices);
+    expect(invoice.total).toBe("8250000.00");
+    await expect(
+      db()
+        .update(s.invoices)
+        .set({ total: "1" })
+        .where(eq(s.invoices.id, invoice.id)),
+    ).rejects.toThrow();
+  });
   it("preserves routing versions and constrains labor to predecessor accepted output", async () => {
     const [v] = await db()
       .select()

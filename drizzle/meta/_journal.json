@@ -57,6 +57,20 @@
       "when": 1793113399614,
       "tag": "0007_tough_pet_avengers",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1793116092851,
+      "tag": "0008_superb_champions",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1793117048115,
+      "tag": "0009_pricing_retirement_boundaries",
+      "breakpoints": true
     }
   ]
 }

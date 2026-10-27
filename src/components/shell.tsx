@@ -79,6 +79,11 @@ export function Shell({
         <p className="nav-heading">WORKSPACE</p>
         <nav>
           {nav.map(([path, label], i) => {
+            if (
+              (path === "pricing" || path === "quotations") &&
+              !can(role as Role, path)
+            )
+              return null;
             if (path === "branding" && !can(role as Role, "branding.read"))
               return null;
             const Icon = icons[i] ?? Layers;

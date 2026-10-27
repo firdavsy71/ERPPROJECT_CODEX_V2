@@ -82,14 +82,12 @@ export async function saveMaster(
       const v = schemas.users.parse(input);
       if (id)
         throw new Error("Use activate/deactivate to manage existing users");
-      await tx
-        .insert(s.users)
-        .values({
-          name: v.name,
-          email: v.email,
-          role: v.role,
-          passwordHash: await hash(v.password, 12),
-        });
+      await tx.insert(s.users).values({
+        name: v.name,
+        email: v.email,
+        role: v.role,
+        passwordHash: await hash(v.password, 12),
+      });
     } else if (module === "settings") {
       const v = schemas.settings.parse(input);
       await tx
@@ -105,8 +103,34 @@ export async function saveMaster(
       }
       if (module === "variants") {
         const v = schemas.variants.parse(input);
-        if (id) await tx.update(s.variants).set(v).where(eq(s.variants.id, id));
-        else await tx.insert(s.variants).values(v);
+        const [previous] = id
+          ? await tx
+              .select()
+              .from(s.variants)
+              .where(eq(s.variants.id, id))
+              .for("update")
+          : [];
+        const [saved] = id
+          ? await tx
+              .update(s.variants)
+              .set(v)
+              .where(eq(s.variants.id, id))
+              .returning()
+          : await tx.insert(s.variants).values(v).returning();
+        if (saved && previous?.price !== saved.price) {
+          const [settings] = await tx.select().from(s.settings);
+          await tx.insert(s.audit).values({
+            actorId: actor.id,
+            action: "catalog-price-change",
+            entityId: saved.id,
+            details: {
+              sku: saved.sku,
+              before: previous?.price ?? null,
+              after: saved.price,
+              currency: settings?.currency ?? "UZS",
+            },
+          });
+        }
       }
       if (module === "customers") {
         const v = schemas.customers.parse(input);
@@ -133,16 +157,14 @@ export async function saveMaster(
         else await tx.insert(s.employees).values(v);
       }
     }
-    await tx
-      .insert(s.audit)
-      .values({
-        actorId: actor.id,
-        action: `save:${module}`,
-        entityId: id ?? module,
-        details: {
-          fields: Object.keys(parsed).filter((k) => k !== "password"),
-        },
-      });
+    await tx.insert(s.audit).values({
+      actorId: actor.id,
+      action: `save:${module}`,
+      entityId: id ?? module,
+      details: {
+        fields: Object.keys(parsed).filter((k) => k !== "password"),
+      },
+    });
   });
 }
 export async function archiveMaster(actor: Actor, module: string, id: string) {

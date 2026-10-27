@@ -219,6 +219,17 @@ export async function ModuleView({
         detail = (
           <>
             <h2>{r.name}</h2>
+            {module === "customers" && can(actor.role, "pricing") && (
+              <p>
+                <Link href={`/pricing?customerId=${r.id}`}>
+                  Customer price lists and contracts
+                </Link>{" "}
+                ·{" "}
+                <Link href={`/quotations?customerId=${r.id}`}>
+                  Customer quotations
+                </Link>
+              </p>
+            )}
             <div className="actions">
               {editable && (
                 <>
@@ -334,6 +345,15 @@ export async function ModuleView({
     const r = d.sales.find((o) => o.id === recordId);
     if (r) {
       const lines = d.saleItems.filter((l) => l.orderId === r.id);
+      if (r.quotationId && can(actor.role, "quotations"))
+        create = (
+          <Link
+            className="btn btn-outline"
+            href={`/quotations/${r.quotationId}`}
+          >
+            Agreed quotation and pricing snapshot
+          </Link>
+        );
       if (can(actor.role, "branding.read"))
         extra = (
           <SalesBrandingLinks
@@ -418,6 +438,7 @@ export async function ModuleView({
           <DataTable
             rows={lines.map((l) => ({
               ...l,
+              pricingSnapshot: undefined,
               product: variantLabel(l.variantId),
             }))}
             columns={columns(
@@ -715,9 +736,21 @@ export async function ModuleView({
           <p>
             {variantLabel(r.variantId)} · {r.quantity} planned units
           </p>
-          <p><Link href="/cutting">Cutting batches, layouts and fabric actuals</Link></p>
-          <p><Link href={`/production-operations/${r.id}`}>Operation routing, employees and labor sessions</Link></p>
-          <p><Link href="/outsourcing">Subcontractor production, custody and inspected deliveries</Link></p>
+          <p>
+            <Link href="/cutting">
+              Cutting batches, layouts and fabric actuals
+            </Link>
+          </p>
+          <p>
+            <Link href={`/production-operations/${r.id}`}>
+              Operation routing, employees and labor sessions
+            </Link>
+          </p>
+          <p>
+            <Link href="/outsourcing">
+              Subcontractor production, custody and inspected deliveries
+            </Link>
+          </p>
           {r.specificationId ? (
             <Link
               className="btn btn-outline"

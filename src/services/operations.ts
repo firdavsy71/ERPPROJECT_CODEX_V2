@@ -15,6 +15,7 @@ import {
 } from "@/services/labor";
 import { cuttingAction, cuttingCompletion } from "@/services/cutting";
 import { outsourcingAction } from "@/services/outsourcing";
+import { pricingAction, approveSalePricing } from "@/services/pricing";
 import {
   planRolls,
   consumeRolls,
@@ -40,6 +41,15 @@ export function lineTotal(
   return discountedLineTotal(q, p, discount);
 }
 export const actions = [
+  "savePricingRule",
+  "approvePricingRule",
+  "rejectPricingRule",
+  "retirePricingRule",
+  "createQuotation",
+  "editQuotation",
+  "approveQuotation",
+  "rejectQuotation",
+  "convertQuotation",
   "saveSubcontractor",
   "createOutsourcing",
   "editOutsourcing",
@@ -83,6 +93,15 @@ export const actions = [
 ] as const;
 export type BusinessAction = (typeof actions)[number];
 const resources: Record<BusinessAction, string> = {
+  savePricingRule: "pricing",
+  approvePricingRule: "pricing.approve",
+  rejectPricingRule: "pricing.approve",
+  retirePricingRule: "pricing.approve",
+  createQuotation: "quotations",
+  editQuotation: "quotations",
+  approveQuotation: "pricing.approve",
+  rejectQuotation: "pricing.approve",
+  convertQuotation: "quotations",
   saveSubcontractor: "suppliers",
   createOutsourcing: "manufacturing",
   editOutsourcing: "manufacturing",
@@ -233,6 +252,20 @@ export async function execute(
       .insert(s.operations)
       .values({ key, fingerprint, actorId: actor.id });
     if (
+      [
+        "savePricingRule",
+        "approvePricingRule",
+        "rejectPricingRule",
+        "retirePricingRule",
+        "createQuotation",
+        "editQuotation",
+        "approveQuotation",
+        "rejectQuotation",
+        "convertQuotation",
+      ].includes(action)
+    ) {
+      await pricingAction(tx, action, input, actor);
+    } else if (
       [
         "saveSubcontractor",
         "createOutsourcing",
@@ -480,6 +513,13 @@ export async function execute(
             quantity: Number(l.quantity),
             price: l.price,
             discount: l.discount,
+            pricingSnapshot: {
+              source: "Manual",
+              currency: v.currency,
+              price: l.price,
+              discount: l.discount,
+              quantity: l.quantity,
+            },
           })),
         );
       }
@@ -582,6 +622,7 @@ export async function execute(
       const [so] = await tx.select().from(s.sales).where(eq(s.sales.id, v.id));
       if (so?.status !== "Draft")
         throw new Error("Only draft sales orders can be confirmed");
+      await approveSalePricing(tx, so, actor);
       await checkBrandingBeforeConfirmation(tx, so.id);
       await tx
         .update(s.sales)

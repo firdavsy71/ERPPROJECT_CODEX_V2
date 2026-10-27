@@ -19,6 +19,7 @@ export function ActionForm({
   id,
   lines,
   secondary = false,
+  initialLineCount = 1,
 }: {
   label: string;
   title?: string;
@@ -29,11 +30,12 @@ export function ActionForm({
   id?: string;
   lines?: LineConfig;
   secondary?: boolean;
+  initialLineCount?: number;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [result, setResult] = useState<Result | null>(null);
   const [pending, start] = useTransition();
-  const [count, setCount] = useState(1);
+  const [count, setCount] = useState(initialLineCount);
   const [key, setKey] = useState("");
   const {
     register,
@@ -67,7 +69,7 @@ export function ActionForm({
         setResult(r);
         if (r.ok) {
           reset(defaults);
-          setCount(1);
+          setCount(initialLineCount);
           dialog.current?.close();
         }
       });

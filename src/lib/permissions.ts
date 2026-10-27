@@ -4,6 +4,8 @@ const permissions: Record<Role, string[]> = {
   admin: ["*"],
   production: ["manufacturing", "boms", "specifications", "branding.read"],
   sales: [
+    "pricing",
+    "quotations",
     "customers",
     "sales",
     "invoices",
