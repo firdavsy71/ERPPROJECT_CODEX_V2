@@ -1,4 +1,7 @@
 import Link from "next/link";
+import { db } from "@/db";
+import { specifications, specificationVariants } from "@/db/schema";
+import { eq } from "drizzle-orm";
 import {
   ArrowLeft,
   ArrowUpRight,
@@ -61,6 +64,28 @@ export async function ModuleView({
   recordId?: string;
 }) {
   const title = nav.find((n) => n[0] === module)?.[1] ?? module;
+  const approvedSpecifications = await db()
+    .select({
+      id: specifications.id,
+      title: specifications.title,
+      version: specifications.version,
+      document: specifications.document,
+      variantId: specificationVariants.variantId,
+    })
+    .from(specifications)
+    .innerJoin(
+      specificationVariants,
+      eq(specifications.id, specificationVariants.specificationId),
+    )
+    .where(eq(specifications.status, "Approved"));
+  const specOptions = Array.from(
+    new Map(
+      approvedSpecifications.map((s) => [
+        s.id,
+        { value: s.id, label: `${s.title} · v${s.version}` },
+      ]),
+    ).values(),
+  );
   const editable = can(actor.role, module);
   const currency = d.settings[0]?.currency ?? "UZS";
   const variantLabel = (id: string) => {
@@ -204,6 +229,12 @@ export async function ModuleView({
             </dl>
             {module === "products" && (
               <>
+                <Link
+                  className="btn btn-outline"
+                  href={`/specifications?productId=${r.id}`}
+                >
+                  Technical specifications & version history
+                </Link>
                 <div className="section-heading">
                   <h3>Size & color variants</h3>
                   {editable && (
@@ -481,6 +512,12 @@ export async function ModuleView({
           fields={[
             field("variantId", "Variant", "select", opts.variants),
             field("laborCost", "Labor cost", "number", undefined, "0"),
+            {
+              name: "specificationId",
+              label: "Approved technical specification (optional)",
+              type: "select",
+              options: specOptions,
+            },
           ]}
           lines={{
             name: "items",
@@ -493,6 +530,15 @@ export async function ModuleView({
         />
       );
     const r = d.boms.find((b) => b.id === recordId);
+    if (r?.specificationId)
+      extra = (
+        <Link
+          className="text-link"
+          href={`/specifications/${r.specificationId}`}
+        >
+          Open approved technical specification
+        </Link>
+      );
     if (r)
       detail = (
         <>
@@ -541,6 +587,13 @@ export async function ModuleView({
           action="manufacture"
           fields={[
             field("bomId", "BOM version", "select", opts.boms),
+            {
+              name: "specificationId",
+              label:
+                "Approved specification (blank = BOM version or latest approved)",
+              type: "select",
+              options: specOptions,
+            },
             field("quantity", "Planned quantity", "number"),
             {
               name: "saleItemId",
@@ -566,6 +619,41 @@ export async function ModuleView({
           <p>
             {variantLabel(r.variantId)} · {r.quantity} planned units
           </p>
+          {r.specificationId ? (
+            <Link
+              className="btn btn-outline"
+              href={`/specifications/${r.specificationId}?variantId=${r.variantId}`}
+            >
+              Technical sheet & QC criteria · fixed approved version
+            </Link>
+          ) : (
+            <div className="actions">
+              <p className="error">
+                Legacy order: an approved technical specification must be bound
+                before further production.
+              </p>
+              {editable && !["Completed", "Cancelled"].includes(r.status) && (
+                <ActionForm
+                  label="Bind approved specification"
+                  action="bindSpecification"
+                  id={r.id}
+                  fields={[
+                    field(
+                      "specificationId",
+                      "Approved specification",
+                      "select",
+                      approvedSpecifications
+                        .filter((s) => s.variantId === r.variantId)
+                        .map((s) => ({
+                          value: s.id,
+                          label: `${s.title} · v${s.version}`,
+                        })),
+                    ),
+                  ]}
+                />
+              )}
+            </div>
+          )}
           <div className="actions">
             {editable && (
               <>
@@ -611,6 +699,16 @@ export async function ModuleView({
                     action="complete"
                     id={r.id}
                     fields={[
+                      ...(
+                        approvedSpecifications.find(
+                          (s) => s.id === r.specificationId,
+                        )?.document.qualityChecks ?? []
+                      ).map((check, i) =>
+                        field(`quality__${i}`, `QC: ${check}`, "select", [
+                          { value: "Pass", label: "Pass" },
+                          { value: "Fail", label: "Fail" },
+                        ]),
+                      ),
                       field(
                         "approved",
                         "Quality-approved units",

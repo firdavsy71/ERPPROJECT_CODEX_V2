@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { createApprovedSpecification } from "./spec-support";
 async function save(page: Page) {
   await page.getByRole("button", { name: "Save record", exact: true }).click();
   await expect(page.locator("dialog[open]")).toHaveCount(0);
@@ -45,6 +46,11 @@ test("administrator runs a persisted sales-to-production workflow through the UI
     .fill("Navy");
   await page.getByLabel("Selling price").fill("100");
   await save(page);
+  await createApprovedSpecification(
+    page,
+    `E2E Jacket ${unique}`,
+    `E2E-${unique}-L`,
+  );
   await page.goto("/boms");
   await open(page, "New BOM version");
   await page.getByLabel("Variant", { exact: false }).selectOption({
@@ -69,7 +75,7 @@ test("administrator runs a persisted sales-to-production workflow through the UI
   const saleRow = page
     .getByRole("row")
     .filter({ hasText: `E2E Customer ${unique}` });
-  const saleNumber=await saleRow.getByRole('link').innerText();
+  const saleNumber = await saleRow.getByRole("link").innerText();
   await saleRow.getByRole("link").click();
   await expect(page).toHaveURL(/\/sales\/[0-9a-f-]+$/);
   const saleUrl = page.url();
@@ -78,7 +84,7 @@ test("administrator runs a persisted sales-to-production workflow through the UI
   await page.goto("/manufacturing");
   await open(page, "New production order");
   await page
-    .getByLabel("BOM version")
+    .getByRole('combobox',{name:'BOM version *',exact:true})
     .selectOption({ label: `E2E Jacket ${unique} / L / Navy · v1` });
   await page.getByLabel("Planned quantity").fill("10");
   await save(page);
@@ -94,6 +100,7 @@ test("administrator runs a persisted sales-to-production workflow through the UI
   await page.getByLabel("Completed units").fill("10");
   await save(page);
   await open(page, "Approve quality & complete");
+  await page.getByLabel("QC: Visual finish").selectOption("Pass");
   await page.getByLabel("Reserved material").selectOption({ index: 1 });
   await page.getByLabel("Actual consumed").fill("25");
   await save(page);
@@ -108,7 +115,10 @@ test("administrator runs a persisted sales-to-production workflow through the UI
   );
   await open(page, "Record shipment");
   await page.getByLabel("Sales line").selectOption({ index: 1 });
-  await page.locator('dialog[open]').getByLabel("Quantity *", { exact: true }).fill("10");
+  await page
+    .locator("dialog[open]")
+    .getByLabel("Quantity *", { exact: true })
+    .fill("10");
   await save(page);
   await open(page, "Generate invoice");
   await page.getByLabel("Due date").fill("2027-01-01");
@@ -133,8 +143,10 @@ test("administrator runs a persisted sales-to-production workflow through the UI
   );
   await page.goto("/dashboard");
   await expect(page.getByText("Business overview.")).toBeVisible();
-  await expect(page.locator('.financial-row')).toContainText('Total invoiced');
-  expect(Number(await page.locator('.kpi').nth(2).locator('strong').innerText())).toBeGreaterThan(0);
+  await expect(page.locator(".financial-row")).toContainText("Total invoiced");
+  expect(
+    Number(await page.locator(".kpi").nth(2).locator("strong").innerText()),
+  ).toBeGreaterThan(0);
   await page.screenshot({ path: ".local/dashboard.png", fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.screenshot({ path: ".local/mobile.png", fullPage: true });

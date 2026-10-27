@@ -78,7 +78,7 @@ export function Shell({
         <p className="nav-heading">WORKSPACE</p>
         <nav>
           {nav.map(([path, label], i) => {
-            const Icon = icons[i];
+            const Icon = icons[i] ?? Layers;
             return (
               <Link
                 key={path}

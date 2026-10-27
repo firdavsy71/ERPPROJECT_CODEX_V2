@@ -11,8 +11,9 @@ import {
   type BusinessAction,
 } from "../src/services/operations";
 import { saveMaster } from "../src/services/master";
-import {overview} from '../src/services/queries';
+import { overview } from "../src/services/queries";
 import type { Actor } from "../src/lib/permissions";
+import { approvedSpec } from "./spec-fixture";
 process.env.PGLITE_DATA_DIR = ":memory:";
 delete process.env.DATABASE_URL;
 let actor: Actor,
@@ -23,7 +24,19 @@ let actor: Actor,
   supplier: string,
   bom: string;
 const act = (action: BusinessAction, input: unknown, key = randomUUID()) =>
-  execute(actor, action, input, key);
+  execute(
+    actor,
+    action,
+    action === "complete"
+      ? {
+          qualityResults: [
+            { check: "Visual finish", result: "Pass", notes: "" },
+          ],
+          ...(input as Record<string, unknown>),
+        }
+      : input,
+    key,
+  );
 beforeAll(async () => {
   const client = localClient()!;
   await migrate(drizzle(client), { migrationsFolder: "drizzle" });
@@ -76,6 +89,7 @@ beforeEach(async () => {
     })
     .returning();
   variant = v.id;
+  await approvedSpec(actor, p.id, v.id);
   const [c] = await db()
     .insert(s.customers)
     .values({ name: "Customer" })
@@ -224,11 +238,15 @@ describe("Critical PostgreSQL workflows", () => {
     expect((await db().select().from(s.invoices))[0].status).toBe("Paid");
     expect((await db().select().from(s.sales))[0].status).toBe("Completed");
     expect(await db().select().from(s.payments)).toHaveLength(2);
-    const metrics=await overview();
+    const metrics = await overview();
     expect(Number(metrics.kpis.completed)).toBe(1);
     expect(Number(metrics.kpis.pending)).toBe(0);
-    expect(metrics.revenue[0]).toMatchObject({currency:'UZS',total:'10080.00',outstanding:'0.00'});
-    expect(metrics.trends[0].revenue).toBe('10080.00');
+    expect(metrics.revenue[0]).toMatchObject({
+      currency: "UZS",
+      total: "10080.00",
+      outstanding: "0.00",
+    });
+    expect(metrics.trends[0].revenue).toBe("10080.00");
   });
   it("calculates decimal amounts and discounts without binary floating point", () => {
     expect(lineTotal("3", "0.10", "10")).toBe("0.27");

@@ -11,6 +11,7 @@ import {
   check,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
+import type { SpecDocument, VariantSpec } from "@/lib/specification";
 const id = () => uuid("id").defaultRandom().primaryKey();
 const time = () =>
   timestamp("created_at", { withTimezone: true }).defaultNow().notNull();
@@ -170,6 +171,9 @@ export const boms = pgTable(
       .references(() => variants.id),
     version: integer().notNull(),
     laborCost: money("labor_cost"),
+    specificationId: uuid("specification_id").references(
+      () => specifications.id,
+    ),
     createdAt: time(),
   },
   (t) => [uniqueIndex("bom_version").on(t.variantId, t.version)],
@@ -246,6 +250,9 @@ export const manufacturing = pgTable(
     bomId: uuid("bom_id")
       .notNull()
       .references(() => boms.id),
+    specificationId: uuid("specification_id").references(
+      () => specifications.id,
+    ),
     saleItemId: uuid("sale_item_id").references(() => saleItems.id),
     warehouseId: uuid("warehouse_id")
       .notNull()
@@ -293,6 +300,10 @@ export const inspections = pgTable("quality_inspections", {
   approved: integer().notNull(),
   rejected: integer().notNull(),
   notes: text(),
+  specificationId: uuid("specification_id").references(() => specifications.id),
+  specificationResults: jsonb("specification_results").$type<
+    { check: string; result: "Pass" | "Fail"; notes: string }[]
+  >(),
   inspectorId: uuid("inspector_id")
     .notNull()
     .references(() => users.id),
@@ -430,3 +441,92 @@ export const loginAttempts = pgTable("login_attempts", {
     .notNull()
     .defaultNow(),
 });
+export const specifications = pgTable(
+  "product_specifications",
+  {
+    id: id(),
+    productId: uuid("product_id")
+      .notNull()
+      .references(() => products.id),
+    version: integer().notNull(),
+    title: text().notNull(),
+    changeNote: text("change_note").notNull(),
+    status: text().notNull().default("Draft"),
+    revision: integer().notNull().default(0),
+    document: jsonb().$type<SpecDocument>().notNull(),
+    productSnapshot: jsonb("product_snapshot")
+      .$type<{ name: string; sku: string }>()
+      .notNull(),
+    createdBy: uuid("created_by")
+      .notNull()
+      .references(() => users.id),
+    approvedBy: uuid("approved_by").references(() => users.id),
+    approvedAt: timestamp("approved_at", { withTimezone: true }),
+    reviewNote: text("review_note"),
+    createdAt: time(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("product_spec_version").on(t.productId, t.version),
+    check(
+      "spec_status",
+      sql`${t.status} in ('Draft','In Review','Approved','Rejected')`,
+    ),
+    check(
+      "spec_approval_metadata",
+      sql`(${t.status}='Approved') = (${t.approvedBy} is not null and ${t.approvedAt} is not null)`,
+    ),
+  ],
+);
+export const specificationVariants = pgTable(
+  "specification_variants",
+  {
+    id: id(),
+    specificationId: uuid("specification_id")
+      .notNull()
+      .references(() => specifications.id),
+    variantId: uuid("variant_id")
+      .notNull()
+      .references(() => variants.id),
+    fabricConsumption: qty("fabric_consumption"),
+    consumptionUnit: text("consumption_unit")
+      .$type<VariantSpec["consumptionUnit"]>()
+      .notNull(),
+    instructions: text().notNull(),
+    measurements: jsonb().$type<VariantSpec["measurements"]>().notNull(),
+    snapshot: jsonb()
+      .$type<{ sku: string; size: string; color: string }>()
+      .notNull(),
+  },
+  (t) => [
+    uniqueIndex("spec_variant").on(t.specificationId, t.variantId),
+    check("spec_positive_consumption", sql`${t.fabricConsumption}>0`),
+  ],
+);
+export const specificationAttachments = pgTable(
+  "specification_attachments",
+  {
+    id: id(),
+    specificationId: uuid("specification_id")
+      .notNull()
+      .references(() => specifications.id),
+    name: text().notNull(),
+    kind: text().notNull(),
+    mime: text().notNull(),
+    bytes: integer().notNull(),
+    data: text().notNull(),
+    createdBy: uuid("created_by")
+      .notNull()
+      .references(() => users.id),
+    createdAt: time(),
+  },
+  (t) => [
+    check("spec_attachment_size", sql`${t.bytes}>0 and ${t.bytes}<=2097152`),
+    check(
+      "spec_attachment_type",
+      sql`${t.mime} in ('image/png','image/jpeg','application/pdf')`,
+    ),
+  ],
+);

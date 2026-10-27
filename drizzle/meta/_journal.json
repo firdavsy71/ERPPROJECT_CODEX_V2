@@ -15,6 +15,13 @@
       "when": 1793093276063,
       "tag": "0001_deep_dorian_gray",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1793097002479,
+      "tag": "0002_little_proteus",
+      "breakpoints": true
     }
   ]
 }

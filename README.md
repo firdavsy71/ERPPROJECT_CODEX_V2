@@ -48,6 +48,8 @@ Neon connectivity, schema migrations, administrator bootstrap and transaction ro
 
 ## Available workflows
 
+Product engineering: **Technical specifications** provides editable drafts, review/approval, immutable approved versions, size charts, fabric composition, construction/seams, reflective tape, accessories, per-variant consumption/instructions/measurements, authenticated drawing/reference uploads and printable technical sheets. Production managers author and submit; administrators approve/reject. Manufacturing fixes an approved version and QC records its acceptance checklist. See [technical specification documentation](docs/technical-specifications.md) for migration, legacy-order behavior and isolated browser-test commands.
+
 Master data: create/edit/archive products, materials, customers, suppliers and employees; create product size/color/fabric variants; create/deactivate users; configure company, currency, timezone and default tax rate. Historical transactions retain foreign keys.
 
 Purchasing: create a multi-line purchase order, place it, open its detail page and receive one or more partial quantities. Receipt quantities cannot exceed the order; repeat submissions do not double stock.
@@ -64,19 +66,19 @@ Reports: CSV exports of orders, production, materials, balances, purchasing, inv
 
 ## Roles
 
-| Role               | Write access                                           |
-| ------------------ | ------------------------------------------------------ |
-| Administrator      | All modules, users, settings                           |
-| Production manager | BOM and manufacturing                                  |
-| Sales manager      | Customers, sales, invoices, payments                   |
-| Inventory manager  | Materials, inventory, purchasing, suppliers, shipments |
-| Viewer             | Read-only operational access                           |
+| Role               | Write access                                                     |
+| ------------------ | ---------------------------------------------------------------- |
+| Administrator      | All modules, users, settings                                     |
+| Production manager | BOM, manufacturing and specification authoring/review submission |
+| Sales manager      | Customers, sales, invoices, payments                             |
+| Inventory manager  | Materials, inventory, purchasing, suppliers, shipments           |
+| Viewer             | Read-only operational access                                     |
 
 Current roles share operational read access. Employee and user data need narrower read policies before use with sensitive personnel information. Credential hashes are never sent to the browser. Deactivated users lose access on their next protected request.
 
 ## Tests and validation
 
-Current validation: 13 integration tests and 2 browser tests pass; production build and TypeScript pass; lint has zero errors and one TanStack/React Compiler compatibility warning; production dependency audit reports zero vulnerabilities. Installation with the lockfile, repeat migrations and repeat bootstrap were also exercised. The browser workflow verifies that persisted transactions update the dashboard, not merely that pages render.
+Current validation: 22 integration tests and 3 browser tests pass; production build and TypeScript pass; lint has zero errors and one TanStack/React Compiler compatibility warning. Installation with the lockfile, repeat migrations and repeat bootstrap were also exercised. The browser workflows verify specification editing, real attachment upload, approval, revision, print-to-PDF, manufacturing/QC and downstream transactions.
 
 ```sh
 npm run typecheck
@@ -89,6 +91,8 @@ npm run test:e2e
 # Or use an already installed browser:
 PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium npm run test:e2e
 ```
+
+If `.env.local` selects Neon, follow the explicit isolated-database commands in [technical specification testing](docs/technical-specifications.md). Browser tests refuse a nonempty `DATABASE_URL` because they create business records.
 
 Integration tests use isolated in-memory PostgreSQL through PGlite, applying the real migrations. They test the complete service workflow, decimal calculations, shortage rollback, cancellation releases, actual consumption, repeat operations, server-side write permissions, database constraints, immutable BOM versions, multiple variants, and receipt rollback. Browser tests run against the production server and use the UI; they add clearly named E2E records to the development database. Never point browser tests at production.
 

@@ -1,4 +1,82 @@
 @import "tailwindcss";
+.spec-editor h2 {
+  margin: 28px 0 12px;
+}
+.spec-row {
+  border: 1px solid var(--border);
+  padding: 18px;
+  border-radius: 8px;
+  margin: 12px 0;
+}
+.spec-rows {
+  margin: 24px 0;
+}
+.spec-row .form-grid {
+  margin: 12px 0;
+}
+.spec-sheet p {
+  white-space: pre-wrap;
+  margin: 10px 0;
+}
+.spec-sheet header {
+  border-bottom: 2px solid var(--green);
+  padding-bottom: 20px;
+}
+.spec-sheet table {
+  white-space: normal;
+}
+.spec-section {
+  margin: 24px 0;
+  break-inside: avoid;
+}
+.spec-sheet figure {
+  margin: 24px 0;
+  break-inside: avoid;
+}
+.spec-history {
+  display: grid;
+  gap: 8px;
+  margin: 15px 0;
+}
+.spec-history a {
+  display: flex;
+  gap: 20px;
+  padding: 10px;
+  background: var(--bg);
+}
+.spec-upload {
+  display: grid;
+  gap: 15px;
+  max-width: 600px;
+  margin-top: 20px;
+}
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  .spec-sheet {
+    font-size: 11px;
+  }
+  .spec-sheet h1 {
+    font-size: 24px;
+  }
+  .spec-sheet th,
+  .spec-sheet td {
+    padding: 7px;
+  }
+  .spec-sheet a {
+    color: black;
+  }
+  .spec-sheet table {
+    page-break-inside: auto;
+  }
+  .spec-sheet tr {
+    break-inside: avoid;
+  }
+  .main-shell main {
+    padding: 0;
+  }
+}
 @custom-variant dark (&:where(.dark, .dark *));
 :root {
   --bg: #f7f8fa;

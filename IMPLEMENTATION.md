@@ -14,11 +14,13 @@ See README for tested capabilities and remaining scope. No claim of production r
 
 ## Current progress
 
-- Foundation implemented: Next.js, 29 PostgreSQL tables, migrations, Auth.js, RBAC and application shell.
+- Foundation implemented: Next.js, 32 PostgreSQL tables, migrations, Auth.js, RBAC and application shell.
 - Master-data and inventory baseline implemented, including movement ledger, adjustments and archival.
 - Manufacturing and commercial vertical workflow implemented and tested at the service layer.
 - Dashboard and CSV baseline implemented; broader analytics remain outstanding.
-- Validation: 13 integration tests passing, type checking and production build passing; lint has no errors and one TanStack/React Compiler compatibility warning. Production dependency audit reports zero vulnerabilities.
+- Validation: 22 integration tests and 3 browser tests passing, type checking and production build passing; lint has no errors and one TanStack/React Compiler compatibility warning.
 - Both local browser tests pass: protected access and the complete UI workflow from customer/product creation through production, shipment, payment and live dashboard updates. Neon connectivity, migrations, administrator bootstrap and transaction rollback are verified through the official Neon WebSocket driver. Public hosting remains outstanding.
 
 The remaining items in README are deliberately explicit; passing the implemented vertical workflow does not imply completion of the entire specification.
+
+Product engineering: structured specifications, six garment families, variant overrides, immutable approvals, real attachments, printable sheets and BOM/manufacturing/QC references are implemented. Regression suites cover version locking, roles, composition, concurrency, uploads, fixed production references, QC acceptance and browser printing. Implementation details and safe test commands: docs/technical-specifications.md.

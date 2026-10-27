@@ -3,6 +3,7 @@ import { and, eq } from "drizzle-orm";
 import Decimal from "decimal.js";
 import { z } from "zod";
 import { db } from "@/db";
+import { resolveApprovedSpecification } from "@/services/specifications";
 import * as s from "@/db/schema";
 import { type Actor, authorize } from "@/lib/permissions";
 import { amount, quantity, orderSchema } from "@/lib/validation";
@@ -31,6 +32,7 @@ export const actions = [
   "reserveSale",
   "ship",
   "manufacture",
+  "bindSpecification",
   "plan",
   "start",
   "record",
@@ -51,6 +53,7 @@ const resources: Record<BusinessAction, string> = {
   reserveSale: "inventory",
   ship: "inventory",
   manufacture: "manufacturing",
+  bindSpecification: "manufacturing",
   plan: "manufacturing",
   start: "manufacturing",
   record: "manufacturing",
@@ -192,6 +195,7 @@ export async function execute(
         .object({
           variantId: z.uuid(),
           laborCost: amount,
+          specificationId: z.uuid().optional().or(z.literal("")),
           items: z.array(z.object({ materialId: z.uuid(), quantity })).min(1),
         })
         .parse(input);
@@ -204,11 +208,15 @@ export async function execute(
         .select()
         .from(s.boms)
         .where(eq(s.boms.variantId, v.variantId));
+      const spec = v.specificationId
+        ? await resolveApprovedSpecification(tx, v.variantId, v.specificationId)
+        : null;
       const [bom] = await tx
         .insert(s.boms)
         .values({
           variantId: v.variantId,
           laborCost: v.laborCost,
+          specificationId: spec?.id,
           version: Math.max(0, ...existing.map((b) => b.version)) + 1,
         })
         .returning();
@@ -445,10 +453,42 @@ export async function execute(
         });
       }
       await syncSale(tx, v.id);
+    } else if (action === "bindSpecification") {
+      const v = z
+        .object({ id: z.uuid(), specificationId: z.uuid() })
+        .parse(input);
+      const [order] = await tx
+        .select()
+        .from(s.manufacturing)
+        .where(eq(s.manufacturing.id, v.id));
+      if (
+        !order ||
+        order.specificationId ||
+        ["Completed", "Cancelled"].includes(order.status)
+      )
+        throw new Error(
+          "Only open legacy orders without a specification can be bound",
+        );
+      const spec = await resolveApprovedSpecification(
+        tx,
+        order.variantId,
+        v.specificationId,
+      );
+      const [bom] = await tx
+        .select()
+        .from(s.boms)
+        .where(eq(s.boms.id, order.bomId));
+      if (bom.specificationId && bom.specificationId !== spec.id)
+        throw new Error("BOM specification differs");
+      await tx
+        .update(s.manufacturing)
+        .set({ specificationId: spec.id })
+        .where(eq(s.manufacturing.id, v.id));
     } else if (action === "manufacture") {
       const v = z
         .object({
           bomId: z.uuid(),
+          specificationId: z.uuid().optional().or(z.literal("")),
           quantity: z.coerce.number().int().positive().max(1000000),
           saleItemId: z.uuid().optional().or(z.literal("")),
           dueDate: z.iso.date().optional().or(z.literal("")),
@@ -460,6 +500,13 @@ export async function execute(
         .from(s.boms)
         .where(eq(s.boms.id, v.bomId));
       if (!bom) throw new Error("BOM not found");
+      const spec = await resolveApprovedSpecification(
+        tx,
+        bom.variantId,
+        v.specificationId || bom.specificationId || undefined,
+      );
+      if (bom.specificationId && bom.specificationId !== spec.id)
+        throw new Error("BOM and manufacturing specification must match");
       if (v.saleItemId) {
         const [l] = await tx
           .select()
@@ -472,6 +519,7 @@ export async function execute(
         number: number("MO"),
         variantId: bom.variantId,
         bomId: bom.id,
+        specificationId: spec.id,
         warehouseId: warehouse.id,
         quantity: v.quantity,
         saleItemId: v.saleItemId || null,
@@ -489,6 +537,14 @@ export async function execute(
         .from(s.manufacturing)
         .where(eq(s.manufacturing.id, id));
       if (!mo) throw new Error("Production order not found");
+      if (
+        ["plan", "start", "record", "complete"].includes(action) &&
+        mo.status !== "Completed" &&
+        !mo.specificationId
+      )
+        throw new Error(
+          "Bind an approved technical specification to this legacy order before continuing",
+        );
       if (action === "plan") {
         if (mo.status !== "Draft")
           throw new Error("Only draft production can be planned");
@@ -558,6 +614,16 @@ export async function execute(
         const v = z
           .object({
             approved: z.coerce.number().int().nonnegative(),
+            qualityResults: z
+              .array(
+                z.object({
+                  check: z.string(),
+                  result: z.enum(["Pass", "Fail"]),
+                  notes: z.string().max(2000).default(""),
+                }),
+              )
+              .max(100)
+              .optional(),
             notes: z.string().max(2000).optional(),
             consumption: z
               .array(
@@ -571,6 +637,30 @@ export async function execute(
           .parse(input);
         if (v.approved > mo.completed)
           throw new Error("Approved units exceed recorded completed units");
+        const spec = await resolveApprovedSpecification(
+          tx,
+          mo.variantId,
+          mo.specificationId!,
+        );
+        const checks = spec.document.qualityChecks;
+        const qualityResults =
+          v.qualityResults ??
+          checks.map((check, i) => ({
+            check,
+            result: z
+              .enum(["Pass", "Fail"])
+              .parse((input as Record<string, unknown>)[`quality__${i}`]),
+            notes: "",
+          }));
+        if (
+          qualityResults.length !== checks.length ||
+          new Set(qualityResults.map((r) => r.check)).size !== checks.length ||
+          checks.some((c) => !qualityResults.some((r) => r.check === c)) ||
+          (v.approved > 0 && qualityResults.some((r) => r.result !== "Pass"))
+        )
+          throw new Error(
+            "Record every specification quality check; all checks must pass to accept units",
+          );
         const reserved = await tx
           .select()
           .from(s.reservations)
@@ -618,6 +708,8 @@ export async function execute(
           rejected: mo.quantity - v.approved,
           notes: v.notes,
           inspectorId: actor.id,
+          specificationId: spec.id,
+          specificationResults: qualityResults,
         });
         if (v.approved > 0)
           await move(
