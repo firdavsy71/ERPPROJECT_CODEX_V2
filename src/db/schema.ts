@@ -655,6 +655,167 @@ export const brandingFiles = pgTable(
 );
 
 export type FabricSegment = { start: string; end: string };
+export const subcontractors = pgTable(
+  "subcontractors",
+  {
+    id: id(),
+    supplierId: uuid("supplier_id")
+      .notNull()
+      .unique()
+      .references(() => suppliers.id),
+    specialties: text().notNull(),
+    capacity: integer().notNull().default(0),
+    notes: text().notNull().default(""),
+    active: boolean().notNull().default(true),
+    createdAt: time(),
+  },
+  (t) => [check("subcontractor_capacity", sql`${t.capacity}>=0`)],
+);
+export const outsourcingOrders = pgTable(
+  "outsourcing_orders",
+  {
+    id: id(),
+    number: text().notNull().unique(),
+    manufacturingOrderId: uuid("manufacturing_order_id")
+      .notNull()
+      .references(() => manufacturing.id),
+    subcontractorId: uuid("subcontractor_id")
+      .notNull()
+      .references(() => subcontractors.id),
+    status: text().notNull().default("Draft"),
+    dueDate: text("due_date").notNull(),
+    currency: text().notNull(),
+    unitCost: money("unit_cost"),
+    produced: integer().notNull().default(0),
+    notes: text().notNull().default(""),
+    createdBy: uuid("created_by")
+      .notNull()
+      .references(() => users.id),
+    createdAt: time(),
+  },
+  (t) => [
+    uniqueIndex("one_live_outsourcing_per_manufacturing")
+      .on(t.manufacturingOrderId)
+      .where(sql`${t.status}<>'Cancelled'`),
+    check(
+      "outsourcing_status",
+      sql`${t.status} in ('Draft','Active','Completed','Cancelled') and ${t.produced}>=0 and ${t.unitCost}>=0`,
+    ),
+  ],
+);
+export const outsourcingCustody = pgTable(
+  "outsourcing_custody",
+  {
+    id: id(),
+    orderId: uuid("order_id")
+      .notNull()
+      .references(() => outsourcingOrders.id),
+    reservationId: uuid("reservation_id")
+      .notNull()
+      .references(() => reservations.id),
+    rollId: uuid("roll_id").references(() => fabricRolls.id),
+    quantity: qty("quantity"),
+    consumed: qty("consumed"),
+    returned: qty("returned"),
+    segments: jsonb()
+      .$type<{ start: string; end: string }[]>()
+      .notNull()
+      .default([]),
+    movementId: uuid("movement_id")
+      .notNull()
+      .references(() => movements.id),
+    reference: text().notNull(),
+    createdBy: uuid("created_by")
+      .notNull()
+      .references(() => users.id),
+    createdAt: time(),
+  },
+  (t) => [
+    uniqueIndex("outsourcing_issue_reference").on(t.orderId, t.reference),
+    check(
+      "custody_quantities",
+      sql`${t.quantity}>0 and ${t.consumed}>=0 and ${t.returned}>=0 and ${t.consumed}+${t.returned}<=${t.quantity}`,
+    ),
+  ],
+);
+export const outsourcingMaterialEvents = pgTable(
+  "outsourcing_material_events",
+  {
+    id: id(),
+    custodyId: uuid("custody_id")
+      .notNull()
+      .references(() => outsourcingCustody.id),
+    kind: text().notNull(),
+    quantity: qty("quantity"),
+    reference: text().notNull(),
+    returnedRollId: uuid("returned_roll_id").references(() => fabricRolls.id),
+    movementId: uuid("movement_id").references(() => movements.id),
+    createdBy: uuid("created_by")
+      .notNull()
+      .references(() => users.id),
+    createdAt: time(),
+  },
+  (t) => [
+    uniqueIndex("custody_document_reference").on(
+      t.custodyId,
+      t.kind,
+      t.reference,
+    ),
+    check(
+      "custody_event_kind",
+      sql`${t.kind} in ('Consumed','Returned') and ${t.quantity}>0`,
+    ),
+  ],
+);
+export const outsourcingReceipts = pgTable(
+  "outsourcing_receipts",
+  {
+    id: id(),
+    orderId: uuid("order_id")
+      .notNull()
+      .references(() => outsourcingOrders.id),
+    reference: text().notNull(),
+    accepted: integer().notNull(),
+    rejected: integer().notNull(),
+    qualityResults: jsonb("quality_results")
+      .$type<{ check: string; result: string }[]>()
+      .notNull(),
+    brandingCheck: text("branding_check"),
+    notes: text().notNull(),
+    movementId: uuid("movement_id").references(() => movements.id),
+    createdBy: uuid("created_by")
+      .notNull()
+      .references(() => users.id),
+    createdAt: time(),
+  },
+  (t) => [
+    uniqueIndex("outsourcing_receipt_reference").on(t.orderId, t.reference),
+    check(
+      "outsourcing_receipt_quantity",
+      sql`${t.accepted}>=0 and ${t.rejected}>=0 and ${t.accepted}+${t.rejected}>0`,
+    ),
+  ],
+);
+export const outsourcingCosts = pgTable(
+  "outsourcing_costs",
+  {
+    id: id(),
+    orderId: uuid("order_id")
+      .notNull()
+      .references(() => outsourcingOrders.id),
+    reference: text().notNull(),
+    amount: money("amount"),
+    notes: text().notNull(),
+    createdBy: uuid("created_by")
+      .notNull()
+      .references(() => users.id),
+    createdAt: time(),
+  },
+  (t) => [
+    uniqueIndex("outsourcing_cost_reference").on(t.orderId, t.reference),
+    check("outsourcing_cost_positive", sql`${t.amount}>0`),
+  ],
+);
 export type RoutingStep = { name: string; minutes: string };
 export const productionRoutings = pgTable(
   "production_routings",

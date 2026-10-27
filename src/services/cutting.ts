@@ -32,6 +32,22 @@ export async function cuttingAction(
       .from(s.manufacturing)
       .where(eq(s.manufacturing.id, reservation.orderId));
     if (
+      (
+        await tx
+          .select()
+          .from(s.outsourcingOrders)
+          .where(
+            and(
+              eq(s.outsourcingOrders.manufacturingOrderId, reservation.orderId),
+              eq(s.outsourcingOrders.status, "Active"),
+            ),
+          )
+      ).length
+    )
+      throw new Error(
+        "Outsourced production is managed by the subcontractor workflow",
+      );
+    if (
       !order?.specificationId ||
       !["Planned", "In Progress"].includes(order.status)
     )
@@ -110,20 +126,18 @@ export async function cuttingAction(
       throw new Error(
         "Batch plans exceed this roll's manufacturing allocation",
       );
-    await tx
-      .insert(s.cuttingBatches)
-      .values({
-        orderId: order.id,
-        reservationId: reservation.id,
-        rollId: v.rollId,
-        specificationId: order.specificationId,
-        size: variant.size,
-        layout: v.layout,
-        rateSource: v.rateSource,
-        quantity: v.quantity,
-        planned: planned.toFixed(4),
-        createdBy: actorId,
-      });
+    await tx.insert(s.cuttingBatches).values({
+      orderId: order.id,
+      reservationId: reservation.id,
+      rollId: v.rollId,
+      specificationId: order.specificationId,
+      size: variant.size,
+      layout: v.layout,
+      rateSource: v.rateSource,
+      quantity: v.quantity,
+      planned: planned.toFixed(4),
+      createdBy: actorId,
+    });
   } else {
     const { id } = z.object({ id: z.uuid() }).parse(input);
     const [batch] = await tx

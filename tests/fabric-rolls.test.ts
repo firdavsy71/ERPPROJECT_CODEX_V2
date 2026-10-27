@@ -115,6 +115,221 @@ async function complete(
   });
 }
 describe("fabric roll inventory and traceability", () => {
+  it("supports subcontractor and draft order maintenance with permissions and immutable activated terms", async () => {
+    await setup();
+    const mo = await makeOrder();
+    await expect(
+      execute(
+        { ...actor, role: "viewer" },
+        "saveSubcontractor",
+        { supplierId: supplier, specialties: "Sewing", capacity: 100 },
+        randomUUID(),
+      ),
+    ).rejects.toThrow("permission");
+    await act("saveSubcontractor", {
+      supplierId: supplier,
+      specialties: "Sewing",
+      capacity: 100,
+    });
+    const [p] = await db().select().from(s.subcontractors);
+    await act("saveSubcontractor", {
+      id: p.id,
+      supplierId: supplier,
+      specialties: "Jackets",
+      capacity: 200,
+      active: "false",
+    });
+    const terms = {
+      manufacturingOrderId: mo.id,
+      subcontractorId: p.id,
+      dueDate: "2027-01-01",
+      currency: "USD",
+      unitCost: "5",
+    };
+    await expect(act("createOutsourcing", terms)).rejects.toThrow("active");
+    await act("saveSubcontractor", {
+      id: p.id,
+      supplierId: supplier,
+      specialties: "Jackets",
+      capacity: 200,
+      active: "true",
+    });
+    await act("createOutsourcing", terms);
+    const [o] = await db().select().from(s.outsourcingOrders);
+    await act("editOutsourcing", { ...terms, id: o.id, unitCost: "6" });
+    expect((await db().select().from(s.outsourcingOrders))[0].unitCost).toBe(
+      "6.00",
+    );
+    await act("cancelOutsourcing", { id: o.id });
+    expect((await db().select().from(s.manufacturing))[0].status).toBe("Draft");
+    await act("createOutsourcing", terms);
+    const active = (await db().select().from(s.outsourcingOrders)).find(
+      (v) => v.status === "Draft",
+    )!;
+    await act("activateOutsourcing", { id: active.id });
+    await expect(
+      act("editOutsourcing", { ...terms, id: active.id, unitCost: "7" }),
+    ).rejects.toThrow();
+    await expect(act("cancelOutsourcing", { id: active.id })).rejects.toThrow(
+      "draft",
+    );
+  });
+  it("tracks outsourcing custody separately from consumption and accepts partial inspected deliveries once", async () => {
+    const rolls = await setup();
+    const mo = await makeOrder();
+    await act("saveSubcontractor", {
+      supplierId: supplier,
+      specialties: "Industrial sewing",
+      capacity: 500,
+      active: "true",
+    });
+    const [profile] = await db().select().from(s.subcontractors);
+    await act("createOutsourcing", {
+      manufacturingOrderId: mo.id,
+      subcontractorId: profile.id,
+      dueDate: "2027-01-01",
+      currency: "USD",
+      unitCost: "5",
+    });
+    const [o] = await db().select().from(s.outsourcingOrders);
+    await expect(act("plan", { id: mo.id })).rejects.toThrow("Outsourcing");
+    await act("activateOutsourcing", { id: o.id });
+    const [r] = await db()
+      .select()
+      .from(s.reservations)
+      .where(eq(s.reservations.orderId, mo.id));
+    const allocation = (
+      await db()
+        .select()
+        .from(s.fabricRollReservations)
+        .where(eq(s.fabricRollReservations.materialReservationId, r.id))
+    )[0];
+    const issue = {
+      id: o.id,
+      reservationId: r.id,
+      rollId: allocation.rollId,
+      quantity: "15",
+      reference: "ISSUE-1",
+    };
+    const key = randomUUID();
+    await act("issueOutsourcingMaterial", issue, key);
+    await act("issueOutsourcingMaterial", issue, key);
+    const [line] = await db().select().from(s.outsourcingCustody);
+    expect([line.quantity, line.consumed, line.returned]).toEqual([
+      "15.0000",
+      "0.0000",
+      "0.0000",
+    ]);
+    expect((await db().select().from(s.reservations))[0].consumed).toBe(
+      "0.0000",
+    );
+    await expect(act("issueOutsourcingMaterial", issue)).rejects.toThrow();
+    await expect(
+      act("settleOutsourcingMaterial", {
+        id: o.id,
+        custodyId: line.id,
+        kind: "Consumed",
+        quantity: "16",
+        reference: "OVER",
+      }),
+    ).rejects.toThrow("outstanding");
+    await act("settleOutsourcingMaterial", {
+      id: o.id,
+      custodyId: line.id,
+      kind: "Consumed",
+      quantity: "12",
+      reference: "USE-1",
+    });
+    await act("settleOutsourcingMaterial", {
+      id: o.id,
+      custodyId: line.id,
+      kind: "Returned",
+      quantity: "3",
+      reference: "RETURN-1",
+    });
+    expect((await db().select().from(s.fabricRolls)).length).toBe(
+      rolls.length + 1,
+    );
+    expect(
+      (
+        await db()
+          .select()
+          .from(s.balances)
+          .where(eq(s.balances.materialId, material))
+      )[0].onHand,
+    ).toBe("293.0000");
+    await expect(
+      act("outsourcingProgress", { id: o.id, produced: 11 }),
+    ).rejects.toThrow("assigned");
+    await act("outsourcingProgress", { id: o.id, produced: 10 });
+    const receipt = {
+      id: o.id,
+      reference: "DELIVERY-1",
+      accepted: 4,
+      rejected: 1,
+      quality__0: "Pass",
+      notes: "One defective sleeve",
+    };
+    const rk = randomUUID();
+    await act("receiveOutsourcing", receipt, rk);
+    await act("receiveOutsourcing", receipt, rk);
+    await expect(act("receiveOutsourcing", receipt)).rejects.toThrow();
+    await expect(
+      act("receiveOutsourcing", {
+        ...receipt,
+        reference: "OVER",
+        accepted: 6,
+        rejected: 0,
+      }),
+    ).rejects.toThrow("exceeds");
+    await expect(
+      act("receiveOutsourcing", {
+        ...receipt,
+        reference: "FAIL",
+        accepted: 1,
+        rejected: 0,
+        quality__0: "Fail",
+      }),
+    ).rejects.toThrow("checks");
+    await expect(act("closeOutsourcing", { id: o.id })).rejects.toThrow(
+      "every assigned",
+    );
+    await act("receiveOutsourcing", {
+      ...receipt,
+      reference: "DELIVERY-2",
+      accepted: 5,
+      rejected: 0,
+      notes: "All checks passed",
+    });
+    await act("recordOutsourcingCost", {
+      id: o.id,
+      reference: "INV-1",
+      amount: "50",
+      notes: "Sewing invoice",
+    });
+    await act("closeOutsourcing", { id: o.id });
+    expect((await db().select().from(s.manufacturing))[0].completed).toBe(9);
+    expect(
+      (
+        await db()
+          .select()
+          .from(s.balances)
+          .where(eq(s.balances.materialId, material))
+      )[0].reserved,
+    ).toBe("0.0000");
+    expect((await db().select().from(s.reservations))[0].consumed).toBe(
+      "12.0000",
+    );
+    expect(
+      (
+        await db()
+          .select()
+          .from(s.balances)
+          .where(eq(s.balances.variantId, mo.variantId))
+      )[0].onHand,
+    ).toBe("9.0000");
+    expect((await db().select().from(s.outsourcingReceipts)).length).toBe(2);
+  });
   it("fixes cutting actuals and posts them only once at manufacturing QC", async () => {
     const rolls = await setup();
     const order = await makeOrder();

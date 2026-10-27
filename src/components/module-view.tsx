@@ -717,6 +717,7 @@ export async function ModuleView({
           </p>
           <p><Link href="/cutting">Cutting batches, layouts and fabric actuals</Link></p>
           <p><Link href={`/production-operations/${r.id}`}>Operation routing, employees and labor sessions</Link></p>
+          <p><Link href="/outsourcing">Subcontractor production, custody and inspected deliveries</Link></p>
           {r.specificationId ? (
             <Link
               className="btn btn-outline"

@@ -14,6 +14,7 @@ import {
   requireRoutingOutput,
 } from "@/services/labor";
 import { cuttingAction, cuttingCompletion } from "@/services/cutting";
+import { outsourcingAction } from "@/services/outsourcing";
 import {
   planRolls,
   consumeRolls,
@@ -39,6 +40,17 @@ export function lineTotal(
   return discountedLineTotal(q, p, discount);
 }
 export const actions = [
+  "saveSubcontractor",
+  "createOutsourcing",
+  "editOutsourcing",
+  "activateOutsourcing",
+  "cancelOutsourcing",
+  "outsourcingProgress",
+  "issueOutsourcingMaterial",
+  "settleOutsourcingMaterial",
+  "receiveOutsourcing",
+  "recordOutsourcingCost",
+  "closeOutsourcing",
   "saveRouting",
   "bindRouting",
   "startOperation",
@@ -71,6 +83,17 @@ export const actions = [
 ] as const;
 export type BusinessAction = (typeof actions)[number];
 const resources: Record<BusinessAction, string> = {
+  saveSubcontractor: "suppliers",
+  createOutsourcing: "manufacturing",
+  editOutsourcing: "manufacturing",
+  activateOutsourcing: "manufacturing",
+  cancelOutsourcing: "manufacturing",
+  outsourcingProgress: "manufacturing",
+  issueOutsourcingMaterial: "inventory",
+  settleOutsourcingMaterial: "inventory",
+  receiveOutsourcing: "manufacturing",
+  recordOutsourcingCost: "manufacturing",
+  closeOutsourcing: "manufacturing",
   saveRouting: "manufacturing",
   bindRouting: "manufacturing",
   startOperation: "manufacturing",
@@ -210,6 +233,29 @@ export async function execute(
       .insert(s.operations)
       .values({ key, fingerprint, actorId: actor.id });
     if (
+      [
+        "saveSubcontractor",
+        "createOutsourcing",
+        "editOutsourcing",
+        "activateOutsourcing",
+        "cancelOutsourcing",
+        "outsourcingProgress",
+        "issueOutsourcingMaterial",
+        "settleOutsourcingMaterial",
+        "receiveOutsourcing",
+        "recordOutsourcingCost",
+        "closeOutsourcing",
+      ].includes(action)
+    ) {
+      await outsourcingAction(tx, action, input, {
+        actor,
+        key,
+        warehouseId: warehouse.id,
+        balance: (itemId, kind) => balance(tx, warehouse.id, itemId, kind),
+        post: (b, q, r, reason, suffix) =>
+          move(tx, b, q, r, reason, "Outsourcing", `${key}:${suffix}`, actor),
+      });
+    } else if (
       [
         "saveRouting",
         "bindRouting",
@@ -771,6 +817,19 @@ export async function execute(
         .from(s.manufacturing)
         .where(eq(s.manufacturing.id, id));
       if (!mo) throw new Error("Production order not found");
+      const external = await tx
+        .select()
+        .from(s.outsourcingOrders)
+        .where(
+          and(
+            eq(s.outsourcingOrders.manufacturingOrderId, mo.id),
+            sql`${s.outsourcingOrders.status}<>'Cancelled'`,
+          ),
+        );
+      if (external.length)
+        throw new Error(
+          "This manufacturing order is managed through Outsourcing; use its custody and QC workflow",
+        );
       if (
         ["plan", "start", "record", "complete"].includes(action) &&
         mo.status !== "Completed" &&

@@ -130,13 +130,11 @@ export async function laborAction(
       .select()
       .from(s.productionRoutings)
       .where(eq(s.productionRoutings.productId, v.productId));
-    await tx
-      .insert(s.productionRoutings)
-      .values({
-        ...v,
-        version: Math.max(0, ...routes.map((r) => r.version)) + 1,
-        createdBy: actorId,
-      });
+    await tx.insert(s.productionRoutings).values({
+      ...v,
+      version: Math.max(0, ...routes.map((r) => r.version)) + 1,
+      createdBy: actorId,
+    });
     return;
   }
   if (action === "bindRouting") {
@@ -183,6 +181,22 @@ export async function laborAction(
     .select()
     .from(s.manufacturing)
     .where(eq(s.manufacturing.id, v.id));
+  if (
+    (
+      await tx
+        .select()
+        .from(s.outsourcingOrders)
+        .where(
+          and(
+            eq(s.outsourcingOrders.manufacturingOrderId, v.id),
+            eq(s.outsourcingOrders.status, "Active"),
+          ),
+        )
+    ).length
+  )
+    throw new Error(
+      "Outsourced production uses subcontractor progress and receipt inspection",
+    );
   if (order.status !== "In Progress")
     throw new Error("Start manufacturing before recording operations");
   const entries = await tx
@@ -208,15 +222,13 @@ export async function laborAction(
     if (!employee?.active) throw new Error("Choose an active employee");
     if (entries.some((e) => e.sequence === v.sequence && !e.endedAt))
       throw new Error("Operation already has an active session");
-    await tx
-      .insert(s.laborEntries)
-      .values({
-        orderRoutingId: route.id,
-        sequence: v.sequence,
-        employeeId,
-        startedAt: new Date(),
-        createdBy: actorId,
-      });
+    await tx.insert(s.laborEntries).values({
+      orderRoutingId: route.id,
+      sequence: v.sequence,
+      employeeId,
+      startedAt: new Date(),
+      createdBy: actorId,
+    });
   } else {
     const result = z
       .object({

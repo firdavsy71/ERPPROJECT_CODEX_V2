@@ -33,6 +33,7 @@ type Context = {
 };
 
 type RollCreation = {
+  source?: string;
   balance: typeof s.balances.$inferSelect;
   rolls: RollInput[];
   actorId: string;
@@ -59,7 +60,7 @@ async function createRolls(tx: Tx, c: RollCreation, opening: boolean) {
     await tx.insert(s.fabricRollMovements).values({
       rollId: roll.id, inventoryMovementId: c.movementId || null,
       quantity: fixed(input.receivedLength), reservedDelta: "0", reason: opening ? "opening allocation" : "receipt",
-      source: opening ? "existing stock" : "purchase receipt", operationKey: `${c.operationKey}:roll:${roll.id}`,
+      source: opening ? "existing stock" : c.source ?? "purchase receipt", operationKey: `${c.operationKey}:roll:${roll.id}`,
       createdBy: c.actorId, segments: [{ start: "0.0000", end: fixed(input.receivedLength) }],
     });
   }

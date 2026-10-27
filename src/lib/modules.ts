@@ -27,6 +27,8 @@ export const nav = [
   ["fabric-rolls", "Fabric rolls"],
   ["cutting", "Cutting room"],
   ["production-operations", "Operations & labor"],
+  ["outsourcing", "Outsourced manufacturing"],
+  ["subcontractors", "Subcontractors"],
 ] as const;
 export const masterFields: Record<string, Field[]> = {
   products: [
