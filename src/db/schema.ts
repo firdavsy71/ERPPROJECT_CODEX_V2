@@ -663,6 +663,230 @@ export const brandingFiles = pgTable(
 );
 
 export type FabricSegment = { start: string; end: string };
+export const legacyDeliveryConfirmations = pgTable(
+  "legacy_delivery_confirmations",
+  {
+    id: id(),
+    shipmentId: uuid("shipment_id")
+      .notNull()
+      .unique()
+      .references(() => shipments.id),
+    notes: text().notNull(),
+    createdBy: uuid("created_by")
+      .notNull()
+      .references(() => users.id),
+    createdAt: time(),
+  },
+);
+export const returnOrders = pgTable(
+  "return_orders",
+  {
+    id: id(),
+    number: text().notNull().unique(),
+    invoiceId: uuid("invoice_id")
+      .notNull()
+      .references(() => invoices.id),
+    orderId: uuid("order_id")
+      .notNull()
+      .references(() => sales.id),
+    status: text().notNull().default("Requested"),
+    intakeClosed: boolean("intake_closed").notNull().default(false),
+    notes: text().notNull(),
+    approvedBy: uuid("approved_by").references(() => users.id),
+    createdBy: uuid("created_by")
+      .notNull()
+      .references(() => users.id),
+    createdAt: time(),
+  },
+  (t) => [
+    check(
+      "return_status",
+      sql`${t.status} in ('Requested','Approved','Receiving','Inspected','Completed','Rejected','Cancelled')`,
+    ),
+  ],
+);
+export const returnItems = pgTable(
+  "return_items",
+  {
+    id: id(),
+    returnId: uuid("return_id")
+      .notNull()
+      .references(() => returnOrders.id),
+    shipmentItemId: uuid("shipment_item_id")
+      .notNull()
+      .references(() => shipmentItems.id),
+    quantity: integer().notNull(),
+    reason: text().notNull(),
+    productSnapshot: text("product_snapshot").notNull(),
+  },
+  (t) => [
+    uniqueIndex("return_origin_line").on(t.returnId, t.shipmentItemId),
+    check("return_item_quantity", sql`${t.quantity}>0`),
+  ],
+);
+export const returnReceipts = pgTable(
+  "return_receipts",
+  {
+    id: id(),
+    returnItemId: uuid("return_item_id")
+      .notNull()
+      .references(() => returnItems.id),
+    quantity: integer().notNull(),
+    actualVariantId: uuid("actual_variant_id")
+      .notNull()
+      .references(() => variants.id),
+    actualProductSnapshot: text("actual_product_snapshot").notNull(),
+    reference: text().notNull(),
+    notes: text().notNull(),
+    createdBy: uuid("created_by")
+      .notNull()
+      .references(() => users.id),
+    createdAt: time(),
+  },
+  (t) => [
+    uniqueIndex("return_receipt_reference").on(t.returnItemId, t.reference),
+    check("return_receipt_quantity", sql`${t.quantity}>0`),
+  ],
+);
+export const returnInspections = pgTable(
+  "return_inspections",
+  {
+    id: id(),
+    receiptId: uuid("receipt_id")
+      .notNull()
+      .unique()
+      .references(() => returnReceipts.id),
+    sellable: integer().notNull(),
+    quarantined: integer().notNull(),
+    condition: text().notNull(),
+    notes: text().notNull(),
+    movementId: uuid("movement_id").references(() => movements.id),
+    createdBy: uuid("created_by")
+      .notNull()
+      .references(() => users.id),
+    createdAt: time(),
+  },
+  (t) => [
+    check(
+      "return_inspection_quantities",
+      sql`${t.sellable}>=0 and ${t.quarantined}>=0 and ${t.sellable}+${t.quarantined}>0`,
+    ),
+  ],
+);
+export const returnQuarantineDispositions = pgTable(
+  "return_quarantine_dispositions",
+  {
+    id: id(),
+    inspectionId: uuid("inspection_id")
+      .notNull()
+      .references(() => returnInspections.id),
+    kind: text().notNull(),
+    quantity: integer().notNull(),
+    reference: text().notNull(),
+    notes: text().notNull(),
+    movementId: uuid("movement_id").references(() => movements.id),
+    createdBy: uuid("created_by")
+      .notNull()
+      .references(() => users.id),
+    createdAt: time(),
+  },
+  (t) => [
+    uniqueIndex("return_quarantine_reference").on(t.inspectionId, t.reference),
+    check(
+      "return_quarantine_quantity",
+      sql`${t.quantity}>0 and ${t.kind} in ('Restock','Scrap')`,
+    ),
+  ],
+);
+export const returnSettlements = pgTable(
+  "return_settlements",
+  {
+    id: id(),
+    returnItemId: uuid("return_item_id")
+      .notNull()
+      .references(() => returnItems.id),
+    kind: text().notNull(),
+    quantity: integer().notNull(),
+    replacementVariantId: uuid("replacement_variant_id").references(
+      () => variants.id,
+    ),
+    replacementOrderId: uuid("replacement_order_id")
+      .unique()
+      .references(() => sales.id),
+    status: text().notNull().default("Requested"),
+    notes: text().notNull(),
+    amount: money("amount"),
+    approvedBy: uuid("approved_by").references(() => users.id),
+    createdBy: uuid("created_by")
+      .notNull()
+      .references(() => users.id),
+    createdAt: time(),
+  },
+  (t) => [
+    check(
+      "return_settlement_valid",
+      sql`${t.kind} in ('Credit','Refund','Exchange','Replacement') and ${t.status} in ('Requested','Approved','Processed','Rejected') and ${t.quantity}>0`,
+    ),
+  ],
+);
+export const returnCreditNotes = pgTable(
+  "return_credit_notes",
+  {
+    id: id(),
+    number: text().notNull().unique(),
+    settlementId: uuid("settlement_id")
+      .notNull()
+      .unique()
+      .references(() => returnSettlements.id),
+    invoiceId: uuid("invoice_id")
+      .notNull()
+      .references(() => invoices.id),
+    saleItemId: uuid("sale_item_id")
+      .notNull()
+      .references(() => saleItems.id),
+    quantity: integer().notNull(),
+    amount: money("amount"),
+    createdBy: uuid("created_by")
+      .notNull()
+      .references(() => users.id),
+    createdAt: time(),
+  },
+  (t) => [
+    check("return_credit_valid", sql`${t.quantity}>0 and ${t.amount}>=0`),
+  ],
+);
+export const returnRefunds = pgTable(
+  "return_refunds",
+  {
+    id: id(),
+    returnId: uuid("return_id")
+      .notNull()
+      .references(() => returnOrders.id),
+    invoiceId: uuid("invoice_id")
+      .notNull()
+      .references(() => invoices.id),
+    reference: text().notNull().unique(),
+    amount: money("amount"),
+    notes: text().notNull(),
+    createdBy: uuid("created_by")
+      .notNull()
+      .references(() => users.id),
+    createdAt: time(),
+  },
+  (t) => [check("return_refund_positive", sql`${t.amount}>0`)],
+);
+export const returnEvents = pgTable("return_events", {
+  id: id(),
+  returnId: uuid("return_id")
+    .notNull()
+    .references(() => returnOrders.id),
+  action: text().notNull(),
+  notes: text().notNull(),
+  createdBy: uuid("created_by")
+    .notNull()
+    .references(() => users.id),
+  createdAt: time(),
+});
 export const deliveryOrders = pgTable(
   "delivery_orders",
   {

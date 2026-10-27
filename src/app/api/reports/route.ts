@@ -1,5 +1,6 @@
 import { currentActor } from "@/auth";
 import { data } from "@/services/queries";
+import Decimal from "decimal.js";
 export async function GET(request: Request) {
   if (!(await currentActor()))
     return new Response("Unauthorized", { status: 401 });
@@ -17,7 +18,31 @@ export async function GET(request: Request) {
   )
     return new Response("Unknown report", { status: 400 });
   const d = await data();
-  const rows = d[name === "inventory" ? "balances" : (name as "sales")];
+  const rows =
+    name === "invoices"
+      ? d.invoices.map((i) => {
+          const credited = d.returnCredits
+              .filter((c) => c.invoiceId === i.id)
+              .reduce((n, c) => n.add(c.amount), new Decimal(0)),
+            refunded = d.returnRefunds
+              .filter((r) => r.invoiceId === i.id)
+              .reduce((n, r) => n.add(r.amount), new Decimal(0)),
+            adjusted = new Decimal(i.total).minus(credited),
+            netPaid = new Decimal(i.paid).minus(refunded);
+          return {
+            ...i,
+            credited: credited.toFixed(2),
+            refunded: refunded.toFixed(2),
+            adjustedTotal: adjusted.toFixed(2),
+            netPaid: netPaid.toFixed(2),
+            outstanding: Decimal.max(adjusted.minus(netPaid), 0).toFixed(2),
+            customerCreditBalance: Decimal.max(
+              netPaid.minus(adjusted),
+              0,
+            ).toFixed(2),
+          };
+        })
+      : d[name === "inventory" ? "balances" : (name as "sales")];
   const keys = Object.keys(rows[0] ?? {});
   const escape = (v: unknown) => {
     let s = String(v ?? "");

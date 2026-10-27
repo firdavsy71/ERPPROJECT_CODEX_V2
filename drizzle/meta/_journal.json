@@ -78,6 +78,20 @@
       "when": 1793120655627,
       "tag": "0010_curved_cardiac",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1793122151547,
+      "tag": "0011_loud_gunslinger",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1793123014915,
+      "tag": "0012_massive_johnny_storm",
+      "breakpoints": true
     }
   ]
 }

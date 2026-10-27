@@ -18,6 +18,11 @@ import { outsourcingAction } from "@/services/outsourcing";
 import { pricingAction, approveSalePricing } from "@/services/pricing";
 import { shippingAction, deliveryCommitted } from "@/services/shipping";
 import {
+  returnsAction,
+  invoiceReturnPosition,
+  requireReplacementBranding,
+} from "@/services/returns";
+import {
   planRolls,
   consumeRolls,
   releaseRolls,
@@ -42,6 +47,20 @@ export function lineTotal(
   return discountedLineTotal(q, p, discount);
 }
 export const actions = [
+  "confirmLegacyShipmentDelivery",
+  "createReturn",
+  "approveReturn",
+  "rejectReturn",
+  "cancelReturn",
+  "receiveReturn",
+  "inspectReturn",
+  "closeReturnIntake",
+  "dispositionReturnQuarantine",
+  "requestReturnSettlement",
+  "approveReturnSettlement",
+  "rejectReturnSettlement",
+  "processReturnSettlement",
+  "recordReturnRefund",
   "createDelivery",
   "editDelivery",
   "recordDeliveryPacking",
@@ -101,6 +120,20 @@ export const actions = [
 ] as const;
 export type BusinessAction = (typeof actions)[number];
 const resources: Record<BusinessAction, string> = {
+  confirmLegacyShipmentDelivery: "shipping",
+  createReturn: "returns.sales",
+  approveReturn: "returns.sales",
+  rejectReturn: "returns.sales",
+  cancelReturn: "returns.sales",
+  receiveReturn: "returns.receive",
+  inspectReturn: "returns.inspect",
+  closeReturnIntake: "returns.sales",
+  dispositionReturnQuarantine: "returns.inspect",
+  requestReturnSettlement: "returns.sales",
+  approveReturnSettlement: "returns.finance",
+  rejectReturnSettlement: "returns.finance",
+  processReturnSettlement: "returns.finance",
+  recordReturnRefund: "returns.finance",
   createDelivery: "shipping",
   editDelivery: "shipping",
   recordDeliveryPacking: "shipping",
@@ -267,6 +300,30 @@ export async function execute(
       .insert(s.operations)
       .values({ key, fingerprint, actorId: actor.id });
     if (
+      [
+        "confirmLegacyShipmentDelivery",
+        "createReturn",
+        "approveReturn",
+        "rejectReturn",
+        "cancelReturn",
+        "receiveReturn",
+        "inspectReturn",
+        "closeReturnIntake",
+        "dispositionReturnQuarantine",
+        "requestReturnSettlement",
+        "approveReturnSettlement",
+        "rejectReturnSettlement",
+        "processReturnSettlement",
+        "recordReturnRefund",
+      ].includes(action)
+    ) {
+      await returnsAction(tx, action, input, {
+        actorId: actor.id,
+        balance: (variantId) => balance(tx, warehouse.id, variantId, "variant"),
+        post: (b, q, reason, suffix) =>
+          move(tx, b, q, 0, reason, "RMA", `${key}:${suffix}`, actor),
+      });
+    } else if (
       [
         "createDelivery",
         "editDelivery",
@@ -658,6 +715,7 @@ export async function execute(
       if (so?.status !== "Draft")
         throw new Error("Only draft sales orders can be confirmed");
       await approveSalePricing(tx, so, actor);
+      await requireReplacementBranding(tx, so.id);
       await checkBrandingBeforeConfirmation(tx, so.id);
       await tx
         .update(s.sales)
@@ -711,10 +769,12 @@ export async function execute(
                 quantity: z.coerce.number().int().positive().max(1000000),
               }),
             )
-            .min(1).max(100),
+            .min(1)
+            .max(100),
         })
         .parse(input);
-      if(new Set(v.lines.map(l=>l.id)).size!==v.lines.length)throw new Error("Each sales line must appear once per shipment");
+      if (new Set(v.lines.map((l) => l.id)).size !== v.lines.length)
+        throw new Error("Each sales line must appear once per shipment");
       const [so] = await tx.select().from(s.sales).where(eq(s.sales.id, v.id));
       if (!so || ["Draft", "Cancelled", "Completed"].includes(so.status))
         throw new Error("Order cannot be shipped");
@@ -1308,7 +1368,8 @@ export async function execute(
         .for("update");
       if (!invoice) throw new Error("Invoice not found");
       const paid = num(invoice.paid).add(v.amount);
-      if (paid.gt(invoice.total))
+      const returnPosition = await invoiceReturnPosition(tx, invoice.id);
+      if (num(v.amount).gt(returnPosition.due))
         throw new Error("Payment exceeds outstanding balance");
       await tx.insert(s.payments).values({
         invoiceId: v.id,
@@ -1320,10 +1381,12 @@ export async function execute(
         .update(s.invoices)
         .set({
           paid: paid.toFixed(2),
-          status: paid.eq(invoice.total) ? "Paid" : "Partially Paid",
+          status: num(v.amount).eq(returnPosition.due)
+            ? "Paid"
+            : "Partially Paid",
         })
         .where(eq(s.invoices.id, v.id));
-      if (paid.eq(invoice.total))
+      if (num(v.amount).eq(returnPosition.due))
         await tx
           .update(s.sales)
           .set({ status: "Completed" })

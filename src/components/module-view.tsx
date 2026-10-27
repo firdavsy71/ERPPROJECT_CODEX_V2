@@ -230,6 +230,11 @@ export async function ModuleView({
                 </Link>
               </p>
             )}
+            {module === "customers" && can(actor.role, "returns.read") && (
+              <p>
+                <Link href="/returns">Return authorizations and exchanges</Link>
+              </p>
+            )}
             <div className="actions">
               {editable && (
                 <>
@@ -363,6 +368,15 @@ export async function ModuleView({
               href={`/quotations/${r.quotationId}`}
             >
               Agreed quotation and pricing snapshot
+            </Link>
+          </div>
+        );
+      if (can(actor.role, "returns.read"))
+        create = (
+          <div className="actions">
+            {create}
+            <Link className="btn btn-outline" href={`/returns?orderId=${r.id}`}>
+              Returns, exchanges and credit requests
             </Link>
           </div>
         );
@@ -1009,12 +1023,29 @@ export async function ModuleView({
     );
   }
   if (module === "invoices") {
+    const returnPosition = (i: (typeof d.invoices)[number]) => {
+      const credited = d.returnCredits
+          .filter((c) => c.invoiceId === i.id)
+          .reduce((n, c) => n.add(c.amount), new Decimal(0)),
+        refunded = d.returnRefunds
+          .filter((c) => c.invoiceId === i.id)
+          .reduce((n, c) => n.add(c.amount), new Decimal(0)),
+        adjusted = new Decimal(i.total).minus(credited),
+        netPaid = new Decimal(i.paid).minus(refunded);
+      return {
+        credited: credited.toFixed(2),
+        refunded: refunded.toFixed(2),
+        adjusted: adjusted.toFixed(2),
+        due: Decimal.max(adjusted.minus(netPaid), 0).toFixed(2),
+        creditBalance: Decimal.max(netPaid.minus(adjusted), 0).toFixed(2),
+      };
+    };
     rows = d.invoices.map((i) => ({
       ...i,
       createdAt: undefined,
       order: d.sales.find((o) => o.id === i.orderId)?.number,
       currency: d.sales.find((o) => o.id === i.orderId)?.currency,
-      outstanding: new Decimal(i.total).minus(i.paid).toFixed(2),
+      outstanding: returnPosition(i).due,
       status:
         i.status !== "Paid" && i.dueDate < new Date().toISOString().slice(0, 10)
           ? "Overdue"
@@ -1037,6 +1068,19 @@ export async function ModuleView({
           <p>
             {d.settings[0]?.name} · Due {r.dueDate}
           </p>
+          {can(actor.role, "returns.read") && (
+            <p>
+              <Link href={`/returns?invoiceId=${r.id}`}>
+                Return requests, credit notes and refunds
+              </Link>
+            </p>
+          )}
+          <p>
+            Credit notes: {returnPosition(r).credited} · External refunds:{" "}
+            {returnPosition(r).refunded} · Adjusted invoice:{" "}
+            {returnPosition(r).adjusted} · Due: {returnPosition(r).due} ·
+            Customer credit balance: {returnPosition(r).creditBalance}
+          </p>
           <dl className="record-grid">
             <div>
               <dt>Subtotal</dt>
@@ -1051,11 +1095,11 @@ export async function ModuleView({
               <dd>{r.total}</dd>
             </div>
             <div>
-              <dt>Paid</dt>
+              <dt>Gross payments received</dt>
               <dd>{r.paid}</dd>
             </div>
           </dl>
-          {editable && r.status !== "Paid" && (
+          {editable && new Decimal(returnPosition(r).due).gt(0) && (
             <ActionForm
               label="Record payment"
               action="pay"
@@ -1066,6 +1110,30 @@ export async function ModuleView({
               ]}
             />
           )}
+          <h3>Return credit notes</h3>
+          <DataTable
+            rows={d.returnCredits
+              .filter((c) => c.invoiceId === r.id)
+              .map((c) => ({ ...c, createdAt: c.createdAt.toISOString() }))}
+            columns={columns(
+              "number|Credit note",
+              "quantity|Units credited",
+              "amount|Gross credit",
+              "createdAt|Issued (UTC)",
+            )}
+          />
+          <h3>Externally paid refunds</h3>
+          <DataTable
+            rows={d.returnRefunds
+              .filter((c) => c.invoiceId === r.id)
+              .map((c) => ({ ...c, createdAt: c.createdAt.toISOString() }))}
+            columns={columns(
+              "reference|Payment reference",
+              "amount|Amount",
+              "notes|Notes",
+              "createdAt|Recorded (UTC)",
+            )}
+          />
           <h3>Payment history</h3>
           <DataTable
             rows={d.payments
