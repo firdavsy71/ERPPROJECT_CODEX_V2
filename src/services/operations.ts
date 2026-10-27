@@ -16,6 +16,7 @@ import {
 import { cuttingAction, cuttingCompletion } from "@/services/cutting";
 import { outsourcingAction } from "@/services/outsourcing";
 import { pricingAction, approveSalePricing } from "@/services/pricing";
+import { repairAction } from "@/services/repairs";
 import { shippingAction, deliveryCommitted } from "@/services/shipping";
 import {
   returnsAction,
@@ -47,6 +48,7 @@ export function lineTotal(
   return discountedLineTotal(q, p, discount);
 }
 export const actions = [
+  "createRepair", "assignRepair", "repairStatus", "requireRepairMaterial", "consumeRepairMaterial", "recordRepairLabor",
   "confirmLegacyShipmentDelivery",
   "createReturn",
   "approveReturn",
@@ -120,6 +122,12 @@ export const actions = [
 ] as const;
 export type BusinessAction = (typeof actions)[number];
 const resources: Record<BusinessAction, string> = {
+  createRepair: "repairs.create",
+  assignRepair: "repairs.work",
+  repairStatus: "repairs.work",
+  requireRepairMaterial: "repairs.work",
+  consumeRepairMaterial: "repairs.work",
+  recordRepairLabor: "repairs.work",
   confirmLegacyShipmentDelivery: "shipping",
   createReturn: "returns.sales",
   approveReturn: "returns.sales",
@@ -299,7 +307,29 @@ export async function execute(
     await tx
       .insert(s.operations)
       .values({ key, fingerprint, actorId: actor.id });
-    if (
+    if (["createRepair", "assignRepair", "repairStatus", "requireRepairMaterial", "consumeRepairMaterial", "recordRepairLabor"].includes(action)) {
+      await repairAction(tx, action, input, {
+        actorId: actor.id,
+        consume: async (materialId, quantity, rollId) => {
+          const b = await balance(tx, warehouse.id, materialId, "material");
+          if (b.rollTracked) {
+            if (!rollId) throw new Error("Select a fabric roll for roll-tracked material.");
+            const [roll] = await tx.select().from(s.fabricRolls).where(eq(s.fabricRolls.id, rollId));
+            if (!roll || roll.balanceId !== b.id) throw new Error("The selected roll does not belong to this material.");
+            let movementId = "";
+            await adjustRoll(tx, { rollId, delta: num(quantity).neg().toFixed(4), actorId: actor.id, operationKey: key, reason: "Repair material consumption", applyMovement: async (current, delta) => {
+              const movement = await move(tx, current, delta, 0, "Repair material consumption", "repair", key + ":material", actor);
+              movementId = movement.id;
+              return movement;
+            } });
+            return movementId;
+          }
+          if (rollId) throw new Error("This material is not roll tracked.");
+          const movement = await move(tx, b, num(quantity).neg(), 0, "Repair material consumption", "repair", key + ":material", actor);
+          return movement.id;
+        },
+      });
+    } else if (
       [
         "confirmLegacyShipmentDelivery",
         "createReturn",

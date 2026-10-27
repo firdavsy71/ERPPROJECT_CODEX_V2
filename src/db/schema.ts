@@ -21,6 +21,61 @@ const money = (name: string) =>
   numeric(name, { precision: 18, scale: 2 }).notNull().default("0");
 const qty = (name: string) =>
   numeric(name, { precision: 18, scale: 4 }).notNull().default("0");
+export const repairOrders = pgTable("repair_orders", {
+  id: id(),
+  number: text().notNull().unique(),
+  customerId: uuid("customer_id").notNull().references(() => customers.id),
+  variantId: uuid("variant_id").references(() => variants.id),
+  productDescription: text("product_description").notNull(),
+  activity: text().notNull(),
+  instructions: text().notNull(),
+  employeeId: uuid("employee_id").references(() => employees.id),
+  estimatedDate: text("estimated_date"),
+  cost: money("cost"),
+  currency: text().notNull().default("UZS"),
+  status: text().notNull().default("Received"),
+  completionNotes: text("completion_notes"),
+  createdBy: uuid("created_by").notNull().references(() => users.id),
+  createdAt: time(),
+}, t => [
+  check("repair_status", sql`${t.status} in ('Received','Diagnosed','Awaiting Materials','In Progress','Quality Check','Completed','Returned','Cancelled')`),
+  check("repair_cost_nonnegative", sql`${t.cost} >= 0`),
+]);
+export const repairRequirements = pgTable("repair_requirements", {
+  id: id(),
+  repairId: uuid("repair_id").notNull().references(() => repairOrders.id),
+  materialId: uuid("material_id").notNull().references(() => materials.id),
+  quantity: qty("quantity"),
+  notes: text(),
+  createdAt: time(),
+}, t => [check("repair_requirement_positive", sql`${t.quantity} > 0`)]);
+export const repairMaterialUsage = pgTable("repair_material_usage", {
+  id: id(),
+  repairId: uuid("repair_id").notNull().references(() => repairOrders.id),
+  materialId: uuid("material_id").notNull().references(() => materials.id),
+  rollId: uuid("roll_id").references(() => fabricRolls.id),
+  quantity: qty("quantity"),
+  movementId: uuid("movement_id").notNull().unique().references(() => movements.id),
+  createdBy: uuid("created_by").notNull().references(() => users.id),
+  createdAt: time(),
+}, t => [check("repair_usage_positive", sql`${t.quantity} > 0`)]);
+export const repairLabor = pgTable("repair_labor", {
+  id: id(),
+  repairId: uuid("repair_id").notNull().references(() => repairOrders.id),
+  employeeId: uuid("employee_id").notNull().references(() => employees.id),
+  minutes: integer().notNull(),
+  notes: text().notNull(),
+  createdBy: uuid("created_by").notNull().references(() => users.id),
+  createdAt: time(),
+}, t => [check("repair_labor_positive", sql`${t.minutes} > 0`)]);
+export const repairEvents = pgTable("repair_events", {
+  id: id(),
+  repairId: uuid("repair_id").notNull().references(() => repairOrders.id),
+  event: text().notNull(),
+  notes: text().notNull(),
+  actorId: uuid("actor_id").notNull().references(() => users.id),
+  createdAt: time(),
+});
 export const users = pgTable(
   "users",
   {
