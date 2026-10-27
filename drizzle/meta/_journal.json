@@ -71,6 +71,13 @@
       "when": 1793117048115,
       "tag": "0009_pricing_retirement_boundaries",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1793120655627,
+      "tag": "0010_curved_cardiac",
+      "breakpoints": true
     }
   ]
 }

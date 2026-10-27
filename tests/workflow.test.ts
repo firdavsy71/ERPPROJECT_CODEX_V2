@@ -15,6 +15,11 @@ import { overview } from "../src/services/queries";
 import type { Actor } from "../src/lib/permissions";
 import { approvedSpec } from "./spec-fixture";
 import { pricingDay } from "../src/services/pricing";
+import {
+  uploadDeliveryProof,
+  readDeliveryProof,
+} from "../src/services/delivery-proof";
+import type { BrandingStorage } from "../src/services/branding-storage";
 process.env.PGLITE_DATA_DIR = ":memory:";
 delete process.env.DATABASE_URL;
 let actor: Actor,
@@ -122,6 +127,202 @@ async function production(quantity = 10) {
   return mo;
 }
 describe("Critical PostgreSQL workflows", () => {
+  it("picks and packs reserved goods, dispatches partial orders once, and never restores dispatched stock on cancellation", async () => {
+    await act("adjust", {
+      itemId: variant,
+      kind: "variant",
+      delta: "10",
+      reason: "Finished opening stock",
+    });
+    await act("sale", {
+      partyId: customer,
+      currency: "UZS",
+      lines: [{ itemId: variant, quantity: "10", price: "100", discount: "0" }],
+    });
+    const [o] = await db().select().from(s.sales);
+    const [line] = await db().select().from(s.saleItems);
+    await act("confirmSale", { id: o.id });
+    await act("reserveSale", { id: o.id });
+    const request = {
+      orderId: o.id,
+      address: "Customer warehouse, main receiving gate",
+      carrier: "Carrier A",
+      vehicle: "TRUCK-1",
+      driver: "Driver A",
+      lines: [{ saleItemId: line.id, quantity: 6 }],
+    };
+    await act("createDelivery", request);
+    const [d] = await db().select().from(s.deliveryOrders);
+    const [item] = await db().select().from(s.deliveryItems);
+    await expect(
+      act("createDelivery", {
+        ...request,
+        lines: [{ saleItemId: line.id, quantity: 5 }],
+      }),
+    ).rejects.toThrow("uncommitted");
+    await expect(
+      act("ship", { id: o.id, lines: [{ id: line.id, quantity: 5 }] }),
+    ).rejects.toThrow("picking list");
+    await expect(act("dispatchDelivery", { id: d.id })).rejects.toThrow(
+      "packed",
+    );
+    await expect(
+      act("recordDeliveryPacking", {
+        id: d.id,
+        lineId: item.id,
+        picked: 7,
+        packed: 7,
+        notes: "Counted",
+      }),
+    ).rejects.toThrow("planned");
+    await act("recordDeliveryPacking", {
+      id: d.id,
+      lineId: item.id,
+      picked: 6,
+      packed: 6,
+      notes: "Six garments checked and packed",
+    });
+    expect(
+      (
+        await db()
+          .select()
+          .from(s.balances)
+          .where(eq(s.balances.variantId, variant))
+      )[0].onHand,
+    ).toBe("10.0000");
+    const key = randomUUID();
+    await act("dispatchDelivery", { id: d.id }, key);
+    await act("dispatchDelivery", { id: d.id }, key);
+    await act("dispatchDelivery", { id: d.id });
+    expect((await db().select().from(s.shipments)).length).toBe(1);
+    expect((await db().select().from(s.sales))[0].status).toBe(
+      "Partially Shipped",
+    );
+    await expect(
+      act("cancelDelivery", {
+        id: d.id,
+        notes: "Attempted cancellation after departure",
+      }),
+    ).rejects.toThrow("already left");
+    expect(
+      (
+        await db()
+          .select()
+          .from(s.balances)
+          .where(eq(s.balances.variantId, variant))
+      )[0].onHand,
+    ).toBe("4.0000");
+    await act("updateDeliveryStatus", {
+      id: d.id,
+      status: "In Transit",
+      tracking: "TRACK-1",
+      notes: "Carrier collected six units",
+    });
+    const objects = new Map<string, Buffer>();
+    const store: BrandingStorage = {
+      put: async (p, b) => {
+        objects.set(p, Buffer.from(b));
+      },
+      read: async (p) => Buffer.from(objects.get(p)!),
+      remove: async (p) => {
+        objects.delete(p);
+      },
+    };
+    const proof = {
+      name: "signed-pod.png",
+      mime: "image/png",
+      data: Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jrZkAAAAASUVORK5CYII=",
+        "base64",
+      ),
+    };
+    const fileId = await uploadDeliveryProof(
+      actor,
+      d.id,
+      proof,
+      "Signed by receiving manager",
+      store,
+    );
+    expect(
+      (
+        await readDeliveryProof(
+          { ...actor, role: "sales" },
+          d.id,
+          fileId,
+          store,
+        )
+      ).bytes.equals(proof.data),
+    ).toBe(true);
+    await expect(
+      uploadDeliveryProof(actor, d.id, proof, "Duplicate proof", store),
+    ).rejects.toThrow("already attached");
+    expect(objects.size).toBe(1);
+    await expect(
+      readDeliveryProof({ ...actor, role: "viewer" }, d.id, fileId, store),
+    ).rejects.toThrow("permission");
+    await expect(
+      readDeliveryProof(actor, randomUUID(), fileId, store),
+    ).rejects.toThrow("File not found");
+    const pathname = Array.from(objects.keys())[0];
+    objects.set(pathname, Buffer.from("tampered"));
+    await expect(readDeliveryProof(actor, d.id, fileId, store)).rejects.toThrow(
+      "integrity",
+    );
+    await act("updateDeliveryStatus", {
+      id: d.id,
+      status: "Delivered",
+      notes: "Receiving manager confirmed six garments",
+    });
+    await act("createDelivery", {
+      ...request,
+      lines: [{ saleItemId: line.id, quantity: 4 }],
+    });
+    const cancelled = (await db().select().from(s.deliveryOrders)).find(
+      (v) => v.status === "Picking",
+    )!;
+    await act("cancelDelivery", {
+      id: cancelled.id,
+      notes: "Reissue packing document",
+    });
+    expect(
+      (
+        await db()
+          .select()
+          .from(s.balances)
+          .where(eq(s.balances.variantId, variant))
+      )[0].reserved,
+    ).toBe("4.0000");
+    await act("createDelivery", {
+      ...request,
+      lines: [{ saleItemId: line.id, quantity: 4 }],
+    });
+    const final = (await db().select().from(s.deliveryOrders)).find(
+      (v) => v.status === "Picking",
+    )!;
+    const [finalItem] = await db()
+      .select()
+      .from(s.deliveryItems)
+      .where(eq(s.deliveryItems.deliveryId, final.id));
+    await act("recordDeliveryPacking", {
+      id: final.id,
+      lineId: finalItem.id,
+      picked: 4,
+      packed: 4,
+      notes: "Final four packed",
+    });
+    await act("dispatchDelivery", { id: final.id });
+    expect((await db().select().from(s.sales))[0].status).toBe("Shipped");
+    expect(
+      (
+        await db()
+          .select()
+          .from(s.balances)
+          .where(eq(s.balances.variantId, variant))
+      )[0].onHand,
+    ).toBe("0.0000");
+    await act("invoice", { id: o.id, dueDate: "2099-01-01", taxRate: "0" });
+    expect((await db().select().from(s.invoices))[0].total).toBe("1000.00");
+  });
   it("can replace a future price version withdrawn before its start date", async () => {
     const rule = {
       name: "Future standard",

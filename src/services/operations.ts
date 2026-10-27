@@ -16,6 +16,7 @@ import {
 import { cuttingAction, cuttingCompletion } from "@/services/cutting";
 import { outsourcingAction } from "@/services/outsourcing";
 import { pricingAction, approveSalePricing } from "@/services/pricing";
+import { shippingAction, deliveryCommitted } from "@/services/shipping";
 import {
   planRolls,
   consumeRolls,
@@ -41,6 +42,13 @@ export function lineTotal(
   return discountedLineTotal(q, p, discount);
 }
 export const actions = [
+  "createDelivery",
+  "editDelivery",
+  "recordDeliveryPacking",
+  "reopenDelivery",
+  "dispatchDelivery",
+  "cancelDelivery",
+  "updateDeliveryStatus",
   "savePricingRule",
   "approvePricingRule",
   "rejectPricingRule",
@@ -93,6 +101,13 @@ export const actions = [
 ] as const;
 export type BusinessAction = (typeof actions)[number];
 const resources: Record<BusinessAction, string> = {
+  createDelivery: "shipping",
+  editDelivery: "shipping",
+  recordDeliveryPacking: "shipping",
+  reopenDelivery: "shipping",
+  dispatchDelivery: "shipping",
+  cancelDelivery: "shipping",
+  updateDeliveryStatus: "shipping",
   savePricingRule: "pricing",
   approvePricingRule: "pricing.approve",
   rejectPricingRule: "pricing.approve",
@@ -252,6 +267,26 @@ export async function execute(
       .insert(s.operations)
       .values({ key, fingerprint, actorId: actor.id });
     if (
+      [
+        "createDelivery",
+        "editDelivery",
+        "recordDeliveryPacking",
+        "reopenDelivery",
+        "dispatchDelivery",
+        "cancelDelivery",
+        "updateDeliveryStatus",
+      ].includes(action)
+    ) {
+      await shippingAction(tx, action, input, {
+        actorId: actor.id,
+        key,
+        warehouseId: warehouse.id,
+        balance: (variantId) => balance(tx, warehouse.id, variantId, "variant"),
+        post: (b, q, r, reason, suffix) =>
+          move(tx, b, q, r, reason, "Delivery", `${key}:${suffix}`, actor),
+        syncSale: (id) => syncSale(tx, id),
+      });
+    } else if (
       [
         "savePricingRule",
         "approvePricingRule",
@@ -676,9 +711,10 @@ export async function execute(
                 quantity: z.coerce.number().int().positive().max(1000000),
               }),
             )
-            .min(1),
+            .min(1).max(100),
         })
         .parse(input);
+      if(new Set(v.lines.map(l=>l.id)).size!==v.lines.length)throw new Error("Each sales line must appear once per shipment");
       const [so] = await tx.select().from(s.sales).where(eq(s.sales.id, v.id));
       if (!so || ["Draft", "Cancelled", "Completed"].includes(so.status))
         throw new Error("Order cannot be shipped");
@@ -693,6 +729,10 @@ export async function execute(
           .where(and(eq(s.saleItems.id, l.id), eq(s.saleItems.orderId, v.id)));
         if (!line || l.quantity > line.reserved)
           throw new Error("Shipment exceeds reserved quantity");
+        if (l.quantity > line.reserved - (await deliveryCommitted(tx, line.id)))
+          throw new Error(
+            "Reserved goods are committed to an active picking list; dispatch that delivery instead",
+          );
         await checkBrandedShipment(tx, line, l.quantity);
         await move(
           tx,

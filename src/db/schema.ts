@@ -663,6 +663,102 @@ export const brandingFiles = pgTable(
 );
 
 export type FabricSegment = { start: string; end: string };
+export const deliveryOrders = pgTable(
+  "delivery_orders",
+  {
+    id: id(),
+    number: text().notNull().unique(),
+    orderId: uuid("order_id")
+      .notNull()
+      .references(() => sales.id),
+    warehouseId: uuid("warehouse_id")
+      .notNull()
+      .references(() => warehouses.id),
+    shipmentId: uuid("shipment_id")
+      .unique()
+      .references(() => shipments.id),
+    status: text().notNull().default("Picking"),
+    customerName: text("customer_name").notNull(),
+    address: text().notNull(),
+    carrier: text().notNull(),
+    vehicle: text().notNull().default(""),
+    driver: text().notNull().default(""),
+    tracking: text().notNull().default(""),
+    notes: text().notNull().default(""),
+    createdBy: uuid("created_by")
+      .notNull()
+      .references(() => users.id),
+    createdAt: time(),
+    dispatchedAt: timestamp("dispatched_at", { withTimezone: true }),
+    deliveredAt: timestamp("delivered_at", { withTimezone: true }),
+  },
+  (t) => [
+    check(
+      "delivery_status",
+      sql`${t.status} in ('Picking','Packed','Dispatched','In Transit','Delivered','Exception','Cancelled') and ((${t.status} in ('Picking','Packed','Cancelled'))=(${t.shipmentId} is null and ${t.dispatchedAt} is null))`,
+    ),
+  ],
+);
+export const deliveryItems = pgTable(
+  "delivery_items",
+  {
+    id: id(),
+    deliveryId: uuid("delivery_id")
+      .notNull()
+      .references(() => deliveryOrders.id),
+    saleItemId: uuid("sale_item_id")
+      .notNull()
+      .references(() => saleItems.id),
+    quantity: integer().notNull(),
+    picked: integer().notNull().default(0),
+    packed: integer().notNull().default(0),
+    productSnapshot: text("product_snapshot").notNull(),
+  },
+  (t) => [
+    uniqueIndex("delivery_sale_line").on(t.deliveryId, t.saleItemId),
+    check(
+      "delivery_item_quantities",
+      sql`${t.quantity}>0 and ${t.picked}>=0 and ${t.packed}>=0 and ${t.packed}<=${t.picked} and ${t.picked}<=${t.quantity}`,
+    ),
+  ],
+);
+export const deliveryEvents = pgTable("delivery_events", {
+  id: id(),
+  deliveryId: uuid("delivery_id")
+    .notNull()
+    .references(() => deliveryOrders.id),
+  status: text().notNull(),
+  notes: text().notNull(),
+  createdBy: uuid("created_by")
+    .notNull()
+    .references(() => users.id),
+  createdAt: time(),
+});
+export const deliveryProofs = pgTable(
+  "delivery_proofs",
+  {
+    id: id(),
+    deliveryId: uuid("delivery_id")
+      .notNull()
+      .references(() => deliveryOrders.id),
+    pathname: text().notNull().unique(),
+    name: text().notNull(),
+    mime: text().notNull(),
+    bytes: integer().notNull(),
+    sha256: text().notNull(),
+    note: text().notNull(),
+    createdBy: uuid("created_by")
+      .notNull()
+      .references(() => users.id),
+    createdAt: time(),
+  },
+  (t) => [
+    check(
+      "delivery_proof_file",
+      sql`${t.bytes}>0 and ${t.bytes}<=2097152 and ${t.mime} in ('image/png','image/jpeg','application/pdf')`,
+    ),
+  ],
+);
 export type PriceTier = {
   minQty: number;
   mode: "Price" | "Discount";

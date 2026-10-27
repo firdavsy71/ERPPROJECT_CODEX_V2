@@ -345,14 +345,26 @@ export async function ModuleView({
     const r = d.sales.find((o) => o.id === recordId);
     if (r) {
       const lines = d.saleItems.filter((l) => l.orderId === r.id);
-      if (r.quotationId && can(actor.role, "quotations"))
+      if (can(actor.role, "shipping.read"))
         create = (
           <Link
             className="btn btn-outline"
-            href={`/quotations/${r.quotationId}`}
+            href={`/deliveries?orderId=${r.id}`}
           >
-            Agreed quotation and pricing snapshot
+            Picking lists, shipments and delivery history
           </Link>
+        );
+      if (r.quotationId && can(actor.role, "quotations"))
+        create = (
+          <div className="actions">
+            {create}
+            <Link
+              className="btn btn-outline"
+              href={`/quotations/${r.quotationId}`}
+            >
+              Agreed quotation and pricing snapshot
+            </Link>
+          </div>
         );
       if (can(actor.role, "branding.read"))
         extra = (
