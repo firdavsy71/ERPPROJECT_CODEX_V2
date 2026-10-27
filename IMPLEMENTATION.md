@@ -19,6 +19,6 @@ See README for tested capabilities and remaining scope. No claim of production r
 - Manufacturing and commercial vertical workflow implemented and tested at the service layer.
 - Dashboard and CSV baseline implemented; broader analytics remain outstanding.
 - Validation: 13 integration tests passing, type checking and production build passing; lint has no errors and one TanStack/React Compiler compatibility warning. Production dependency audit reports zero vulnerabilities.
-- Both browser tests pass: protected access and the complete UI workflow from customer/product creation through production, shipment, payment and live dashboard updates. Neon connectivity and deployment remain unverified because no credentials were supplied.
+- Both local browser tests pass: protected access and the complete UI workflow from customer/product creation through production, shipment, payment and live dashboard updates. Neon connectivity, migrations, administrator bootstrap and transaction rollback are verified through the official Neon WebSocket driver. Public hosting remains outstanding.
 
 The remaining items in README are deliberately explicit; passing the implemented vertical workflow does not imply completion of the entire specification.

@@ -23,15 +23,15 @@ For an empty database without example data, use `npm run db:bootstrap` instead o
 ## Neon and Vercel
 
 1. Create a Neon project and an isolated development database/branch.
-2. Set `DATABASE_URL` to the PostgreSQL connection string from Neon, with TLS enabled (`sslmode=require`). The application uses Drizzle with `postgres.js`; it supports PostgreSQL transactions and disables prepared statements for pooled connections.
+2. Set `DATABASE_URL` to the PostgreSQL connection string from Neon, with TLS enabled (`sslmode=require`). Neon hostnames use Drizzle with the official Neon Serverless Pool over secure WebSockets, supporting interactive transactions. Standard PostgreSQL hostnames use `postgres.js` with prepared statements disabled. The Neon transport honors `HTTPS_PROXY` / `HTTP_PROXY` when configured, preserving TLS verification.
 3. Set `AUTH_SECRET` to a cryptographically random secret, `AUTH_URL` to your application origin, and `ADMIN_EMAIL` / `ADMIN_PASSWORD` for bootstrap. Passwords must have at least 12 characters. Set secrets in your environment manager; do not commit them or paste them into chat.
 4. Run `npm run db:migrate` and `npm run db:bootstrap` against the intended database. Migrations are checked into `drizzle/` and can be reapplied safely. Do not run migrations as part of every HTTP request.
 5. Import the repository into Vercel, select the Next.js preset, configure `DATABASE_URL`, `AUTH_SECRET`, and `AUTH_URL` for the appropriate deployment environments, then build with `npm run build`. Use distinct development/preview and production databases.
-6. Remove bootstrap credentials from runtime settings after creating your administrator. Configure network access to your exact Neon hostname if your execution environment restricts outbound traffic. PostgreSQL TCP connectivity must be available; an HTTPS-only proxy secret is not a substitute for a usable database connection string.
+6. Remove bootstrap credentials from runtime settings after creating your administrator. Configure network access to your exact Neon hostname if your execution environment restricts outbound traffic. Neon connections require secure WebSocket access on port 443; standard PostgreSQL connections require TCP access. The database driver needs the actual connection string, not an HTTPS proxy-secret placeholder.
 
 For example records in a **development Neon branch only**, explicitly run `SEED_DEMO_DATA=1 npm run db:seed`. The seed refuses `NODE_ENV=production`. Production bootstrap never creates demo products or inventory.
 
-Neon and Vercel deployment have not been verified without service credentials. Do not treat a local PGlite test as a Neon connectivity or deployment test.
+Neon connectivity, schema migrations, administrator bootstrap and transaction rollback have been verified against the configured database. Public Vercel deployment remains unverified. Do not treat a local PGlite test as a deployment test.
 
 ## Architecture
 
