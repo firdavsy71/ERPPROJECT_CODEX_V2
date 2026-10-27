@@ -1,0 +1,6 @@
+.next
+.local
+node_modules
+package-lock.json
+drizzle/meta
+test-results
