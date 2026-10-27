@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import Decimal from "decimal.js";
 import { z } from "zod";
 import { db } from "@/db";
@@ -7,6 +7,12 @@ import { resolveApprovedSpecification } from "@/services/specifications";
 import * as s from "@/db/schema";
 import { type Actor, authorize } from "@/lib/permissions";
 import { amount, quantity, orderSchema } from "@/lib/validation";
+import { discountedLineTotal } from "@/lib/money";
+import {
+  checkBrandingBeforeConfirmation,
+  resolveBrandingForManufacturing,
+  checkBrandedShipment,
+} from "@/services/branding";
 type Tx = Parameters<Parameters<ReturnType<typeof db>["transaction"]>[0]>[0];
 const num = (v: Decimal.Value) => new Decimal(v);
 export function lineTotal(
@@ -14,12 +20,7 @@ export function lineTotal(
   p: Decimal.Value,
   discount: Decimal.Value = "0",
 ) {
-  return num(q)
-    .mul(p)
-    .mul(num(100).minus(discount))
-    .div(100)
-    .toDecimalPlaces(2)
-    .toFixed(2);
+  return discountedLineTotal(q, p, discount);
 }
 export const actions = [
   "adjust",
@@ -360,6 +361,7 @@ export async function execute(
       const [so] = await tx.select().from(s.sales).where(eq(s.sales.id, v.id));
       if (so?.status !== "Draft")
         throw new Error("Only draft sales orders can be confirmed");
+      await checkBrandingBeforeConfirmation(tx, so.id);
       await tx
         .update(s.sales)
         .set({ status: "Confirmed" })
@@ -429,6 +431,7 @@ export async function execute(
           .where(and(eq(s.saleItems.id, l.id), eq(s.saleItems.orderId, v.id)));
         if (!line || l.quantity > line.reserved)
           throw new Error("Shipment exceeds reserved quantity");
+        await checkBrandedShipment(tx, line, l.quantity);
         await move(
           tx,
           await balance(tx, warehouse.id, line.variantId, "variant"),
@@ -490,6 +493,7 @@ export async function execute(
           bomId: z.uuid(),
           specificationId: z.uuid().optional().or(z.literal("")),
           quantity: z.coerce.number().int().positive().max(1000000),
+          brandingVersionId: z.uuid().optional().or(z.literal("")),
           saleItemId: z.uuid().optional().or(z.literal("")),
           dueDate: z.iso.date().optional().or(z.literal("")),
           notes: z.string().max(2000).optional(),
@@ -500,11 +504,23 @@ export async function execute(
         .from(s.boms)
         .where(eq(s.boms.id, v.bomId));
       if (!bom) throw new Error("BOM not found");
+      const branding = await resolveBrandingForManufacturing(
+        tx,
+        v.saleItemId || undefined,
+        v.brandingVersionId || undefined,
+      );
       const spec = await resolveApprovedSpecification(
         tx,
         bom.variantId,
-        v.specificationId || bom.specificationId || undefined,
+        v.specificationId ||
+          bom.specificationId ||
+          branding?.specificationId ||
+          undefined,
       );
+      if (branding && branding.specificationId !== spec.id)
+        throw new Error(
+          "Engineering and approved branding specifications must match",
+        );
       if (bom.specificationId && bom.specificationId !== spec.id)
         throw new Error("BOM and manufacturing specification must match");
       if (v.saleItemId) {
@@ -514,12 +530,51 @@ export async function execute(
           .where(eq(s.saleItems.id, v.saleItemId));
         if (!l || l.variantId !== bom.variantId)
           throw new Error("Sales line does not match this BOM variant");
+        if (branding) {
+          const [order] = await tx
+            .select()
+            .from(s.sales)
+            .where(eq(s.sales.id, l.orderId));
+          if (
+            order.status === "Draft" ||
+            ["Cancelled", "Shipped", "Completed"].includes(order.status)
+          )
+            throw new Error(
+              "Confirm the branded sales order before manufacturing",
+            );
+          const existing = await tx
+            .select({
+              quantity: s.manufacturing.quantity,
+              completed: s.manufacturing.completed,
+              status: s.manufacturing.status,
+            })
+            .from(s.manufacturing)
+            .where(
+              and(
+                eq(s.manufacturing.saleItemId, l.id),
+                sql`${s.manufacturing.status}<>'Cancelled'`,
+              ),
+            );
+          if (
+            existing.reduce(
+              (n, o) =>
+                n + (o.status === "Completed" ? o.completed : o.quantity),
+              0,
+            ) +
+              v.quantity >
+            l.quantity
+          )
+            throw new Error(
+              "Branded production exceeds the sales line quantity",
+            );
+        }
       }
       await tx.insert(s.manufacturing).values({
         number: number("MO"),
         variantId: bom.variantId,
         bomId: bom.id,
         specificationId: spec.id,
+        brandingVersionId: branding?.id,
         warehouseId: warehouse.id,
         quantity: v.quantity,
         saleItemId: v.saleItemId || null,
@@ -614,6 +669,7 @@ export async function execute(
         const v = z
           .object({
             approved: z.coerce.number().int().nonnegative(),
+            brandingCheck: z.enum(["Pass", "Fail"]).optional(),
             qualityResults: z
               .array(
                 z.object({
@@ -637,6 +693,13 @@ export async function execute(
           .parse(input);
         if (v.approved > mo.completed)
           throw new Error("Approved units exceed recorded completed units");
+        if (
+          mo.brandingVersionId &&
+          (!v.brandingCheck || (v.approved > 0 && v.brandingCheck !== "Pass"))
+        )
+          throw new Error(
+            "Verify branding against the fixed approved proof before accepting units",
+          );
         const spec = await resolveApprovedSpecification(
           tx,
           mo.variantId,
@@ -708,6 +771,8 @@ export async function execute(
           rejected: mo.quantity - v.approved,
           notes: v.notes,
           inspectorId: actor.id,
+          brandingVersionId: mo.brandingVersionId,
+          brandingCheck: mo.brandingVersionId ? v.brandingCheck : null,
           specificationId: spec.id,
           specificationResults: qualityResults,
         });

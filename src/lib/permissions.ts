@@ -2,9 +2,22 @@ export type Role = "admin" | "production" | "sales" | "inventory" | "viewer";
 export type Actor = { id: string; role: Role };
 const permissions: Record<Role, string[]> = {
   admin: ["*"],
-  production: ["manufacturing", "boms", "specifications"],
-  sales: ["customers", "sales", "invoices"],
-  inventory: ["materials", "purchases", "suppliers", "inventory"],
+  production: ["manufacturing", "boms", "specifications", "branding.read"],
+  sales: [
+    "customers",
+    "sales",
+    "invoices",
+    "branding",
+    "branding.read",
+    "branding.approve",
+  ],
+  inventory: [
+    "materials",
+    "purchases",
+    "suppliers",
+    "inventory",
+    "branding.read",
+  ],
   viewer: [],
 };
 export function can(role: Role, resource: string) {

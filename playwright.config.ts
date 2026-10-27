@@ -18,6 +18,7 @@ export default defineConfig({
     },
   },
   webServer: {
+    env: { BLOB_READ_WRITE_TOKEN: "" },
     command: "npm start",
     url: "http://localhost:3000/login",
     reuseExistingServer: false,

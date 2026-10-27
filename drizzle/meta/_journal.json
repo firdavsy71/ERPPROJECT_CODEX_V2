@@ -22,6 +22,13 @@
       "when": 1793097002479,
       "tag": "0002_little_proteus",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1793098600663,
+      "tag": "0003_careful_leader",
+      "breakpoints": true
     }
   ]
 }

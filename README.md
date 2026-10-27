@@ -48,6 +48,8 @@ Neon connectivity, schema migrations, administrator bootstrap and transaction ro
 
 ## Available workflows
 
+Customer customization: **Custom branding** links a sales line to versioned logo placements (embroidery, screen print, heat transfer), custom colors/tape, exact pricing, externally prepared proofs, recorded customer approval and fixed manufacturing instructions. Company files use **private Vercel Blob**, not public/local storage. Connect `BLOB_READ_WRITE_TOKEN` before uploads or design approval can work. See [custom branding setup and workflows](docs/custom-branding.md).
+
 Product engineering: **Technical specifications** provides editable drafts, review/approval, immutable approved versions, size charts, fabric composition, construction/seams, reflective tape, accessories, per-variant consumption/instructions/measurements, authenticated drawing/reference uploads and printable technical sheets. Production managers author and submit; administrators approve/reject. Manufacturing fixes an approved version and QC records its acceptance checklist. See [technical specification documentation](docs/technical-specifications.md) for migration, legacy-order behavior and isolated browser-test commands.
 
 Master data: create/edit/archive products, materials, customers, suppliers and employees; create product size/color/fabric variants; create/deactivate users; configure company, currency, timezone and default tax rate. Historical transactions retain foreign keys.
@@ -66,19 +68,21 @@ Reports: CSV exports of orders, production, materials, balances, purchasing, inv
 
 ## Roles
 
-| Role               | Write access                                                     |
-| ------------------ | ---------------------------------------------------------------- |
-| Administrator      | All modules, users, settings                                     |
-| Production manager | BOM, manufacturing and specification authoring/review submission |
-| Sales manager      | Customers, sales, invoices, payments                             |
-| Inventory manager  | Materials, inventory, purchasing, suppliers, shipments           |
-| Viewer             | Read-only operational access                                     |
+| Role               | Write access                                                            |
+| ------------------ | ----------------------------------------------------------------------- |
+| Administrator      | All modules, users, settings                                            |
+| Production manager | BOM, manufacturing and specification authoring/review submission        |
+| Sales manager      | Customers, sales, invoices, payments, branding drafts/customer approval |
+| Inventory manager  | Materials, inventory, purchasing, suppliers, shipments                  |
+| Viewer             | Read-only operational access                                            |
 
 Current roles share operational read access. Employee and user data need narrower read policies before use with sensitive personnel information. Credential hashes are never sent to the browser. Deactivated users lose access on their next protected request.
 
+Branding documents and private files are restricted to Admin, Sales, Production and Inventory; Viewer has no branding access. Production and Inventory can read fixed proofs/instructions but cannot author or approve customer designs.
+
 ## Tests and validation
 
-Current validation: 22 integration tests and 3 browser tests pass; production build and TypeScript pass; lint has zero errors and one TanStack/React Compiler compatibility warning. Installation with the lockfile, repeat migrations and repeat bootstrap were also exercised. The browser workflows verify specification editing, real attachment upload, approval, revision, print-to-PDF, manufacturing/QC and downstream transactions.
+Current validation: 39 integration tests and 4 browser tests pass; production build and TypeScript pass; lint has zero errors and one TanStack/React Compiler compatibility warning. Branding approval/revision/pricing/file-integrity tests use real PostgreSQL with an injected test-only storage adapter. Browser tests verify drafts, revisions and safe storage-unconfigured failures in addition to existing engineering/manufacturing workflows. Live private Blob verification requires its token and is available through the admin storage-check button.
 
 ```sh
 npm run typecheck

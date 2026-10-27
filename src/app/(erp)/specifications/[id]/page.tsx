@@ -19,6 +19,7 @@ import {
   inspections,
 } from "@/db/schema";
 import { eq } from "drizzle-orm";
+import { brandingVersions } from "@/db/schema";
 import { z } from "zod";
 export default async function SpecificationDetail({
   params,
@@ -64,13 +65,19 @@ export default async function SpecificationDetail({
       </>
     );
   }
-  const [linkedBoms, orders, qc] = await Promise.all([
+  const [linkedBoms, orders, qc, branding] = await Promise.all([
     db().select().from(boms).where(eq(boms.specificationId, id)),
     db()
       .select()
       .from(manufacturing)
       .where(eq(manufacturing.specificationId, id)),
     db().select().from(inspections).where(eq(inspections.specificationId, id)),
+    can(actor.role, "branding.read")
+      ? db()
+          .select()
+          .from(brandingVersions)
+          .where(eq(brandingVersions.specificationId, id))
+      : Promise.resolve([]),
   ]);
   return (
     <>
@@ -129,6 +136,18 @@ export default async function SpecificationDetail({
           <AttachmentUploader id={id} />
         )}
         <h3>Linked BOM versions</h3>
+        {branding.length > 0 && (
+          <>
+            <h3>Customer-specific branding versions</h3>
+            {branding.map((v) => (
+              <p key={v.id}>
+                <Link className="text-link" href={`/branding/${v.id}`}>
+                  {v.snapshot.customer} · {v.title} v{v.version} · {v.status}
+                </Link>
+              </p>
+            ))}
+          </>
+        )}
         {linkedBoms.map((b) => (
           <p key={b.id}>
             <Link className="text-link" href={`/boms/${b.id}`}>

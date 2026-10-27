@@ -1,6 +1,9 @@
 import Link from "next/link";
 import { db } from "@/db";
 import { specifications, specificationVariants } from "@/db/schema";
+import { brandingVersions } from "@/db/schema";
+import { SalesBrandingLinks } from "./branding-links";
+import { ManufacturingBranding } from "./manufacturing-branding";
 import { eq } from "drizzle-orm";
 import {
   ArrowLeft,
@@ -86,6 +89,19 @@ export async function ModuleView({
       ]),
     ).values(),
   );
+  const brandingOptions =
+    module === "manufacturing" && can(actor.role, "branding.read")
+      ? (
+          await db()
+            .select()
+            .from(brandingVersions)
+            .where(eq(brandingVersions.status, "Approved"))
+            .limit(500)
+        ).map((v) => ({
+          value: v.id,
+          label: `${v.snapshot.order} · ${v.snapshot.sku} · ${v.title} v${v.version}`,
+        }))
+      : [];
   const editable = can(actor.role, module);
   const currency = d.settings[0]?.currency ?? "UZS";
   const variantLabel = (id: string) => {
@@ -235,6 +251,14 @@ export async function ModuleView({
                 >
                   Technical specifications & version history
                 </Link>
+                {can(actor.role, "branding.read") && (
+                  <Link
+                    className="btn btn-outline"
+                    href={`/branding?productId=${r.id}`}
+                  >
+                    Customer branding designs
+                  </Link>
+                )}
                 <div className="section-heading">
                   <h3>Size & color variants</h3>
                   {editable && (
@@ -309,6 +333,17 @@ export async function ModuleView({
     const r = d.sales.find((o) => o.id === recordId);
     if (r) {
       const lines = d.saleItems.filter((l) => l.orderId === r.id);
+      if (can(actor.role, "branding.read"))
+        extra = (
+          <SalesBrandingLinks
+            lines={lines.map((l) => ({
+              id: l.id,
+              label: variantLabel(l.variantId),
+              total: formatMoney(l.brandingTotal, r.currency),
+            }))}
+            editable={editable && r.status === "Draft"}
+          />
+        );
       detail = (
         <>
           <h2>
@@ -389,6 +424,7 @@ export async function ModuleView({
               "quantity|Ordered",
               "price|Unit price",
               "discount|Discount %",
+              "brandingTotal|Customization charge",
               "reserved|Reserved",
               "shipped|Shipped",
             )}
@@ -588,6 +624,13 @@ export async function ModuleView({
           fields={[
             field("bomId", "BOM version", "select", opts.boms),
             {
+              name: "brandingVersionId",
+              label:
+                "Approved branding version (blank = current approved for linked sales line)",
+              type: "select",
+              options: brandingOptions,
+            },
+            {
               name: "specificationId",
               label:
                 "Approved specification (blank = BOM version or latest approved)",
@@ -610,6 +653,15 @@ export async function ModuleView({
         />
       );
     const r = d.manufacturing.find((m) => m.id === recordId);
+    if (r?.brandingVersionId && can(actor.role, "branding.read"))
+      extra = (
+        <ManufacturingBranding
+          id={r.brandingVersionId}
+          actor={actor}
+          quantity={r.quantity}
+          orderId={r.id}
+        />
+      );
     if (r) {
       detail = (
         <>
@@ -699,6 +751,19 @@ export async function ModuleView({
                     action="complete"
                     id={r.id}
                     fields={[
+                      ...(r.brandingVersionId
+                        ? [
+                            field(
+                              "brandingCheck",
+                              "Branding matches fixed approved proof",
+                              "select",
+                              [
+                                { value: "Pass", label: "Pass" },
+                                { value: "Fail", label: "Fail" },
+                              ],
+                            ),
+                          ]
+                        : []),
                       ...(
                         approvedSpecifications.find(
                           (s) => s.id === r.specificationId,

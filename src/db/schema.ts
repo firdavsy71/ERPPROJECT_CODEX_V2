@@ -9,9 +9,11 @@ import {
   jsonb,
   uniqueIndex,
   check,
+  type AnyPgColumn,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import type { SpecDocument, VariantSpec } from "@/lib/specification";
+import type { BrandingDocument, BrandingSnapshot } from "@/lib/branding";
 const id = () => uuid("id").defaultRandom().primaryKey();
 const time = () =>
   timestamp("created_at", { withTimezone: true }).defaultNow().notNull();
@@ -229,6 +231,7 @@ export const saleItems = pgTable(
     quantity: integer().notNull(),
     price: money("price"),
     discount: money("discount"),
+    brandingTotal: money("branding_total"),
     reserved: integer().notNull().default(0),
     shipped: integer().notNull().default(0),
   },
@@ -252,6 +255,9 @@ export const manufacturing = pgTable(
       .references(() => boms.id),
     specificationId: uuid("specification_id").references(
       () => specifications.id,
+    ),
+    brandingVersionId: uuid("branding_version_id").references(
+      () => brandingVersions.id,
     ),
     saleItemId: uuid("sale_item_id").references(() => saleItems.id),
     warehouseId: uuid("warehouse_id")
@@ -300,6 +306,10 @@ export const inspections = pgTable("quality_inspections", {
   approved: integer().notNull(),
   rejected: integer().notNull(),
   notes: text(),
+  brandingVersionId: uuid("branding_version_id").references(
+    () => brandingVersions.id,
+  ),
+  brandingCheck: text("branding_check"),
   specificationId: uuid("specification_id").references(() => specifications.id),
   specificationResults: jsonb("specification_results").$type<
     { check: string; result: "Pass" | "Fail"; notes: string }[]
@@ -527,6 +537,118 @@ export const specificationAttachments = pgTable(
     check(
       "spec_attachment_type",
       sql`${t.mime} in ('image/png','image/jpeg','application/pdf')`,
+    ),
+  ],
+);
+export const brandingRequests = pgTable("branding_requests", {
+  id: id(),
+  saleItemId: uuid("sale_item_id")
+    .notNull()
+    .unique()
+    .references(() => saleItems.id),
+  approvedVersionId: uuid("approved_version_id").references(
+    (): AnyPgColumn => brandingVersions.id,
+  ),
+  createdBy: uuid("created_by")
+    .notNull()
+    .references(() => users.id),
+  createdAt: time(),
+});
+export const brandingVersions = pgTable(
+  "branding_versions",
+  {
+    id: id(),
+    requestId: uuid("request_id")
+      .notNull()
+      .references(() => brandingRequests.id),
+    version: integer().notNull(),
+    title: text().notNull(),
+    changeNote: text("change_note").notNull(),
+    status: text().notNull().default("Draft"),
+    revision: integer().notNull().default(0),
+    specificationId: uuid("specification_id")
+      .notNull()
+      .references(() => specifications.id),
+    document: jsonb().$type<BrandingDocument>().notNull(),
+    snapshot: jsonb().$type<BrandingSnapshot>().notNull(),
+    perUnit: money("per_unit"),
+    setup: money("setup"),
+    total: money("total"),
+    createdBy: uuid("created_by")
+      .notNull()
+      .references(() => users.id),
+    createdAt: time(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    approvedBy: uuid("approved_by").references(() => users.id),
+    approvedAt: timestamp("approved_at", { withTimezone: true }),
+    customerApprover: text("customer_approver"),
+    approvalReference: text("approval_reference"),
+    reviewNote: text("review_note"),
+  },
+  (t) => [
+    uniqueIndex("branding_request_version").on(t.requestId, t.version),
+    check(
+      "branding_status",
+      sql`${t.status} in ('Draft','In Review','Approved','Rejected')`,
+    ),
+    check(
+      "branding_approval",
+      sql`(${t.status}='Approved') = (${t.approvedBy} is not null and ${t.approvedAt} is not null and ${t.customerApprover} is not null and ${t.approvalReference} is not null)`,
+    ),
+    check(
+      "branding_prices",
+      sql`${t.perUnit}>=0 and ${t.setup}>=0 and ${t.total}>=0`,
+    ),
+  ],
+);
+export const brandingAssets = pgTable(
+  "branding_assets",
+  {
+    id: id(),
+    requestId: uuid("request_id")
+      .notNull()
+      .references(() => brandingRequests.id),
+    provider: text().notNull().default("vercel-blob-private"),
+    pathname: text().notNull().unique(),
+    name: text().notNull(),
+    mime: text().notNull(),
+    bytes: integer().notNull(),
+    sha256: text().notNull(),
+    createdBy: uuid("created_by")
+      .notNull()
+      .references(() => users.id),
+    createdAt: time(),
+  },
+  (t) => [
+    check("branding_asset_size", sql`${t.bytes}>0 and ${t.bytes}<=2097152`),
+    check(
+      "branding_asset_mime",
+      sql`${t.mime} in ('image/png','image/jpeg','application/pdf')`,
+    ),
+    check("branding_asset_provider", sql`${t.provider}='vercel-blob-private'`),
+  ],
+);
+export const brandingFiles = pgTable(
+  "branding_version_files",
+  {
+    id: id(),
+    versionId: uuid("version_id")
+      .notNull()
+      .references(() => brandingVersions.id),
+    assetId: uuid("asset_id")
+      .notNull()
+      .references(() => brandingAssets.id),
+    purpose: text().notNull(),
+    proofRevision: integer("proof_revision"),
+    createdAt: time(),
+  },
+  (t) => [
+    uniqueIndex("branding_file_link").on(t.versionId, t.assetId, t.purpose),
+    check(
+      "branding_file_purpose",
+      sql`${t.purpose} in ('Logo','Design proof','Reference')`,
     ),
   ],
 );
