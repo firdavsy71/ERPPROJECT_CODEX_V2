@@ -1,0 +1,36 @@
+import { test, expect } from "@playwright/test";
+
+test("allocate existing fabric and record a damaged section", async ({ page }) => {
+  const code = `ROLL-${Date.now()}`;
+  await page.goto("/login");
+  await page.getByLabel("Email address").fill(process.env.ADMIN_EMAIL!);
+  await page.getByLabel("Password", { exact: true }).fill(process.env.ADMIN_PASSWORD!);
+  await page.getByRole("button", { name: "Sign in to workspace" }).click();
+  await expect(page).toHaveURL(/dashboard/);
+  await page.goto("/fabric-rolls");
+  await page.getByRole("button", { name: "Allocate existing stock to rolls" }).click();
+  const dialog = page.locator("dialog[open]");
+  const materialId = await dialog.getByLabel("Material and current stock").locator("option", { hasText: "Polycotton fabric" }).getAttribute("value");
+  await dialog.getByLabel("Material and current stock").selectOption(materialId!);
+  await dialog.getByLabel("Unique roll number").fill(code);
+  await dialog.getByLabel("Supplier batch").fill("TEST-BATCH");
+  await dialog.getByLabel("Supplier lot").fill("TEST-LOT");
+  await dialog.getByLabel("Color").fill("Lime");
+  await dialog.getByLabel("Composition").fill("65% polyester / 35% cotton");
+  await dialog.getByLabel("Width (cm)").fill("150");
+  await dialog.getByLabel("Usable length (m)").fill("1000");
+  await dialog.getByLabel("Storage location").fill("A-01");
+  await dialog.getByRole("button", { name: "Save record" }).click();
+  await expect(dialog).toHaveCount(0);
+  await page.getByRole("link", { name: code, exact: true }).click();
+  await expect(page.getByRole("heading", { name: code })).toBeVisible();
+  await page.getByRole("button", { name: "Record damaged section" }).click();
+  const damage = page.locator("dialog[open]");
+  await damage.getByLabel("Start (m from roll start)").fill("10");
+  await damage.getByLabel("End (m from roll start)").fill("15");
+  await damage.getByLabel("Damage description").fill("Test tear in fabric");
+  await damage.getByRole("button", { name: "Save record" }).click();
+  await expect(damage).toHaveCount(0);
+  await expect(page.getByText("Usable: 995.0000 m", { exact: false })).toBeVisible();
+  await expect(page.getByText("Test tear in fabric", { exact: true }).first()).toBeVisible();
+});

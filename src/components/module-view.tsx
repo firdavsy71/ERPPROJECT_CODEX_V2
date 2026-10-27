@@ -4,6 +4,7 @@ import { specifications, specificationVariants } from "@/db/schema";
 import { brandingVersions } from "@/db/schema";
 import { SalesBrandingLinks } from "./branding-links";
 import { ManufacturingBranding } from "./manufacturing-branding";
+import { ManufacturingRolls } from "./manufacturing-rolls";
 import { eq } from "drizzle-orm";
 import {
   ArrowLeft,
@@ -474,7 +475,15 @@ export async function ModuleView({
               />
             )}{" "}
             {editable &&
-              ["Ordered", "Partially Received"].includes(r.status) && (
+              ["Ordered", "Partially Received"].includes(r.status) &&
+              lines.some(
+                (line) =>
+                  !d.balances.some(
+                    (balance) =>
+                      balance.materialId === line.materialId &&
+                      balance.rollTracked,
+                  ),
+              ) && (
                 <ActionForm
                   label="Receive materials"
                   action="receive"
@@ -487,15 +496,40 @@ export async function ModuleView({
                         "id",
                         "Purchase line",
                         "select",
-                        lines.map((l) => ({
-                          value: l.id,
-                          label: `${d.materials.find((m) => m.id === l.materialId)?.name} · ${new Decimal(l.quantity).minus(l.received)} remaining`,
-                        })),
+                        lines
+                          .filter(
+                            (line) =>
+                              !d.balances.some(
+                                (balance) =>
+                                  balance.materialId === line.materialId &&
+                                  balance.rollTracked,
+                              ),
+                          )
+                          .map((l) => ({
+                            value: l.id,
+                            label: `${d.materials.find((m) => m.id === l.materialId)?.name} · ${new Decimal(l.quantity).minus(l.received)} remaining`,
+                          })),
                       ),
                       field("quantity", "Received quantity", "number"),
                     ],
                   }}
                 />
+              )}
+            {editable &&
+              ["Ordered", "Partially Received"].includes(r.status) &&
+              lines.some((line) =>
+                d.balances.some(
+                  (balance) =>
+                    balance.materialId === line.materialId &&
+                    balance.rollTracked,
+                ),
+              ) && (
+                <Link
+                  className="btn btn-outline"
+                  href={`/fabric-rolls/receive/${r.id}`}
+                >
+                  Receive identified fabric rolls
+                </Link>
               )}
           </div>
           <DataTable
@@ -663,6 +697,16 @@ export async function ModuleView({
         />
       );
     if (r) {
+      const hasTrackedMaterials = d.bomItems.some(
+        (item) =>
+          item.bomId === r.bomId &&
+          d.balances.some(
+            (balance) =>
+              balance.materialId === item.materialId &&
+              balance.warehouseId === r.warehouseId &&
+              balance.rollTracked,
+          ),
+      );
       detail = (
         <>
           <h2>
@@ -709,7 +753,7 @@ export async function ModuleView({
           <div className="actions">
             {editable && (
               <>
-                {r.status === "Draft" && (
+                {r.status === "Draft" && !hasTrackedMaterials && (
                   <ActionForm
                     label="Check & reserve materials"
                     action="plan"
@@ -745,7 +789,7 @@ export async function ModuleView({
                     ]}
                   />
                 )}{" "}
-                {r.status === "Quality Control" && (
+                {r.status === "Quality Control" && !hasTrackedMaterials && (
                   <ActionForm
                     label="Approve quality & complete"
                     action="complete"
@@ -819,6 +863,16 @@ export async function ModuleView({
               </>
             )}
           </div>
+          <ManufacturingRolls
+            order={r}
+            data={d}
+            editable={editable}
+            qualityChecks={
+              approvedSpecifications.find(
+                (specification) => specification.id === r.specificationId,
+              )?.document.qualityChecks ?? []
+            }
+          />
           <h3>Material requirements</h3>
           <DataTable
             rows={d.bomItems

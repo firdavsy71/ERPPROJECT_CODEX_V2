@@ -9,6 +9,16 @@ import { type Actor, authorize } from "@/lib/permissions";
 import { amount, quantity, orderSchema } from "@/lib/validation";
 import { discountedLineTotal } from "@/lib/money";
 import {
+  planRolls,
+  consumeRolls,
+  releaseRolls,
+  rollInputSchema,
+  receiveRolls,
+  activateRollTracking,
+  adjustRoll,
+  damageRoll,
+} from "@/services/fabric-rolls";
+import {
   checkBrandingBeforeConfirmation,
   resolveBrandingForManufacturing,
   checkBrandedShipment,
@@ -24,6 +34,10 @@ export function lineTotal(
 }
 export const actions = [
   "adjust",
+  "activateRollTracking",
+  "registerRolls",
+  "adjustRoll",
+  "damageRoll",
   "bom",
   "purchase",
   "orderPurchase",
@@ -45,6 +59,10 @@ export const actions = [
 export type BusinessAction = (typeof actions)[number];
 const resources: Record<BusinessAction, string> = {
   adjust: "inventory",
+  activateRollTracking: "inventory",
+  registerRolls: "inventory",
+  adjustRoll: "inventory",
+  damageRoll: "inventory",
   bom: "boms",
   purchase: "purchases",
   orderPurchase: "purchases",
@@ -107,15 +125,19 @@ async function move(
     .update(s.balances)
     .set({ onHand: onHand.toFixed(4), reserved: reserved.toFixed(4) })
     .where(eq(s.balances.id, b.id));
-  await tx.insert(s.movements).values({
-    balanceId: b.id,
-    quantity: num(q).toFixed(4),
-    reservedDelta: num(r).toFixed(4),
-    reason,
-    source,
-    operationKey: key,
-    createdBy: actor.id,
-  });
+  const [movement] = await tx
+    .insert(s.movements)
+    .values({
+      balanceId: b.id,
+      quantity: num(q).toFixed(4),
+      reservedDelta: num(r).toFixed(4),
+      reason,
+      source,
+      operationKey: key,
+      createdBy: actor.id,
+    })
+    .returning();
+  return movement;
 }
 function number(prefix: string) {
   return `${prefix}-${randomUUID().slice(0, 8).toUpperCase()}`;
@@ -181,16 +203,107 @@ export async function execute(
         .parse(input);
       if (v.kind === "variant" && !num(v.delta).isInteger())
         throw new Error("Finished goods quantities must be whole units");
-      await move(
-        tx,
-        await balance(tx, warehouse.id, v.itemId, v.kind),
-        v.delta,
-        0,
-        v.reason,
-        "adjustment",
-        key,
-        actor,
-      );
+      const b = await balance(tx, warehouse.id, v.itemId, v.kind);
+      if (v.kind === "material" && b.rollTracked)
+        throw new Error(
+          "This material uses roll tracking. Adjust an individually identified fabric roll instead.",
+        );
+      await move(tx, b, v.delta, 0, v.reason, "adjustment", key, actor);
+    } else if (
+      action === "activateRollTracking" ||
+      action === "registerRolls"
+    ) {
+      const v = z
+        .object({
+          materialId: z.uuid(),
+          rolls: z.array(rollInputSchema).max(1000),
+          reason: z.string().trim().min(5).max(500).optional(),
+        })
+        .parse(input);
+      const b = await balance(tx, warehouse.id, v.materialId, "material");
+      if (action === "activateRollTracking") {
+        await activateRollTracking(tx, {
+          balance: b,
+          rolls: v.rolls,
+          actorId: actor.id,
+          operationKey: key,
+        });
+      } else {
+        if (!v.rolls.length)
+          throw new Error("Register at least one fabric roll");
+        if (!v.reason)
+          throw new Error(
+            "A receipt reason is required for registering new roll stock",
+          );
+        const received = v.rolls.reduce(
+          (total, roll) => total.add(roll.receivedLength),
+          num(0),
+        );
+        const movement = await move(
+          tx,
+          b,
+          received,
+          0,
+          v.reason,
+          "roll receipt",
+          key,
+          actor,
+        );
+        await receiveRolls(tx, {
+          balance: b,
+          rolls: v.rolls,
+          quantity: received.toFixed(4),
+          movementId: movement.id,
+          actorId: actor.id,
+          operationKey: key,
+        });
+      }
+    } else if (action === "adjustRoll" || action === "damageRoll") {
+      const common = z.object({
+        rollId: z.uuid(),
+        reason: z.string().trim().min(5).max(500),
+      });
+      const v = common.parse(input);
+      const context = {
+        rollId: v.rollId,
+        reason: v.reason,
+        actorId: actor.id,
+        operationKey: key,
+        applyMovement: (b: typeof s.balances.$inferSelect, delta: string) =>
+          move(
+            tx,
+            b,
+            delta,
+            0,
+            v.reason,
+            `fabric roll ${v.rollId}`,
+            key,
+            actor,
+          ),
+      };
+      if (action === "adjustRoll") {
+        const { delta } = z
+          .object({
+            delta: z
+              .string()
+              .regex(/^-?\d{1,12}(\.\d{1,4})?$/)
+              .refine((value) => !num(value).isZero()),
+          })
+          .parse(input);
+        await adjustRoll(tx, { ...context, delta });
+      } else {
+        const { start, end } = z
+          .object({
+            start: z.string().regex(/^\d{1,12}(\.\d{1,4})?$/),
+            end: quantity,
+          })
+          .refine(
+            (value) => num(value.end).gt(value.start),
+            "Damaged section end must be greater than its start",
+          )
+          .parse(input);
+        await damageRoll(tx, { ...context, start, end });
+      }
     } else if (action === "bom") {
       const v = z
         .object({
@@ -307,7 +420,16 @@ export async function execute(
       const v = z
         .object({
           id: z.uuid(),
-          lines: z.array(z.object({ id: z.uuid(), quantity })).min(1),
+          lines: z
+            .array(
+              z.object({
+                id: z.uuid(),
+                quantity,
+                rolls: z.array(rollInputSchema).min(1).max(1000).optional(),
+              }),
+            )
+            .min(1)
+            .max(1000),
         })
         .parse(input);
       const [po] = await tx
@@ -316,7 +438,10 @@ export async function execute(
         .where(eq(s.purchases.id, v.id));
       if (!po || !["Ordered", "Partially Received"].includes(po.status))
         throw new Error("Purchase must be ordered before receiving");
-      await tx.insert(s.receipts).values({ orderId: po.id, operationKey: key });
+      const [receipt] = await tx
+        .insert(s.receipts)
+        .values({ orderId: po.id, operationKey: key })
+        .returning();
       for (const l of v.lines) {
         const [line] = await tx
           .select()
@@ -329,9 +454,10 @@ export async function execute(
           );
         if (!line || num(line.received).add(l.quantity).gt(line.quantity))
           throw new Error("Receipt exceeds remaining ordered quantity");
-        await move(
+        const b = await balance(tx, warehouse.id, line.materialId, "material");
+        const movement = await move(
           tx,
-          await balance(tx, warehouse.id, line.materialId, "material"),
+          b,
           l.quantity,
           0,
           "Purchase receipt",
@@ -339,6 +465,22 @@ export async function execute(
           `${key}:${l.id}`,
           actor,
         );
+        if (b.rollTracked)
+          await receiveRolls(tx, {
+            balance: b,
+            rolls: l.rolls ?? [],
+            quantity: l.quantity,
+            movementId: movement.id,
+            actorId: actor.id,
+            operationKey: `${key}:${l.id}`,
+            purchaseReceiptId: receipt.id,
+            purchaseOrderItemId: line.id,
+            supplierId: po.supplierId,
+          });
+        else if (l.rolls?.length)
+          throw new Error(
+            "Enable roll tracking before receiving fabric rolls for this material",
+          );
         await tx
           .update(s.purchaseItems)
           .set({ received: num(line.received).add(l.quantity).toFixed(4) })
@@ -601,6 +743,20 @@ export async function execute(
           "Bind an approved technical specification to this legacy order before continuing",
         );
       if (action === "plan") {
+        const v = z
+          .object({
+            rollAllocations: z
+              .array(
+                z.object({
+                  materialId: z.uuid(),
+                  rollId: z.uuid(),
+                  quantity,
+                }),
+              )
+              .max(1000)
+              .optional(),
+          })
+          .parse(input);
         if (mo.status !== "Draft")
           throw new Error("Only draft production can be planned");
         const items = await tx
@@ -608,6 +764,15 @@ export async function execute(
           .from(s.bomItems)
           .where(eq(s.bomItems.bomId, mo.bomId));
         if (!items.length) throw new Error("BOM has no materials");
+        if (
+          v.rollAllocations?.some(
+            (allocation) =>
+              !items.some((item) => item.materialId === allocation.materialId),
+          )
+        )
+          throw new Error(
+            "Roll allocations must belong to this production order's BOM materials",
+          );
         for (const item of items) {
           const needed = num(item.quantity).mul(mo.quantity);
           const b = await balance(
@@ -616,7 +781,7 @@ export async function execute(
             item.materialId,
             "material",
           );
-          await move(
+          const movement = await move(
             tx,
             b,
             0,
@@ -626,11 +791,37 @@ export async function execute(
             `${key}:${item.id}`,
             actor,
           );
-          await tx.insert(s.reservations).values({
-            orderId: id,
-            balanceId: b.id,
-            quantity: needed.toFixed(4),
-          });
+          const [reservation] = await tx
+            .insert(s.reservations)
+            .values({
+              orderId: id,
+              balanceId: b.id,
+              quantity: needed.toFixed(4),
+            })
+            .returning();
+          if (b.rollTracked)
+            await planRolls(tx, {
+              balance: b,
+              reservationId: reservation.id,
+              orderId: id,
+              quantity: needed.toFixed(4),
+              allocations: v.rollAllocations
+                ?.filter(
+                  (allocation) => allocation.materialId === item.materialId,
+                )
+                .map(({ rollId, quantity }) => ({ rollId, quantity })),
+              actorId: actor.id,
+              operationKey: `${key}:${item.id}`,
+              movementId: movement.id,
+            });
+          else if (
+            v.rollAllocations?.some(
+              (allocation) => allocation.materialId === item.materialId,
+            )
+          )
+            throw new Error(
+              "Roll allocations are only supported for roll-tracked materials",
+            );
         }
         await tx
           .update(s.manufacturing)
@@ -689,6 +880,16 @@ export async function execute(
                 }),
               )
               .optional(),
+            rollConsumption: z
+              .array(
+                z.object({
+                  reservationId: z.uuid(),
+                  rollId: z.uuid(),
+                  quantity: z.string().regex(/^\d{1,12}(\.\d{1,4})?$/),
+                }),
+              )
+              .max(1000)
+              .optional(),
           })
           .parse(input);
         if (v.approved > mo.completed)
@@ -740,17 +941,29 @@ export async function execute(
           throw new Error(
             "Consumption must account for every reserved material exactly once",
           );
+        if (
+          v.rollConsumption?.some(
+            (entry) =>
+              !reserved.some(
+                (reservation) => reservation.id === entry.reservationId,
+              ),
+          )
+        )
+          throw new Error(
+            "Roll consumption must belong to this production order's material reservations",
+          );
         for (const r of reserved) {
           const [b] = await tx
             .select()
             .from(s.balances)
-            .where(eq(s.balances.id, r.balanceId));
+            .where(eq(s.balances.id, r.balanceId))
+            .for("update");
           const consumed =
             v.consumption?.find((c) => c.reservationId === r.id)?.quantity ??
             r.quantity;
           if (num(consumed).gt(num(b.onHand).minus(b.reserved).add(r.quantity)))
             throw new Error("Actual consumption exceeds available materials");
-          await move(
+          const movement = await move(
             tx,
             b,
             num(consumed).neg(),
@@ -760,6 +973,26 @@ export async function execute(
             `${key}:${r.id}`,
             actor,
           );
+          if (b.rollTracked)
+            await consumeRolls(tx, {
+              balance: b,
+              reservationId: r.id,
+              orderId: id,
+              reservedQuantity: r.quantity,
+              quantity: consumed,
+              consumption: v.rollConsumption
+                ?.filter((entry) => entry.reservationId === r.id)
+                .map(({ rollId, quantity }) => ({ rollId, quantity })),
+              actorId: actor.id,
+              operationKey: `${key}:${r.id}`,
+              movementId: movement.id,
+            });
+          else if (
+            v.rollConsumption?.some((entry) => entry.reservationId === r.id)
+          )
+            throw new Error(
+              "Roll consumption is only supported for roll-tracked materials",
+            );
           await tx
             .update(s.reservations)
             .set({ consumed })
@@ -806,8 +1039,9 @@ export async function execute(
           const [b] = await tx
             .select()
             .from(s.balances)
-            .where(eq(s.balances.id, r.balanceId));
-          await move(
+            .where(eq(s.balances.id, r.balanceId))
+            .for("update");
+          const movement = await move(
             tx,
             b,
             0,
@@ -817,6 +1051,16 @@ export async function execute(
             `${key}:${r.id}`,
             actor,
           );
+          if (b.rollTracked)
+            await releaseRolls(tx, {
+              balance: b,
+              reservationId: r.id,
+              orderId: id,
+              quantity: r.quantity,
+              actorId: actor.id,
+              operationKey: `${key}:${r.id}`,
+              movementId: movement.id,
+            });
         }
         await tx
           .update(s.manufacturing)

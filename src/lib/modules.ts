@@ -24,6 +24,7 @@ export const nav = [
   ["settings", "Settings"],
   ["specifications", "Technical specifications"],
   ["branding", "Custom branding"],
+  ["fabric-rolls", "Fabric rolls"],
 ] as const;
 export const masterFields: Record<string, Field[]> = {
   products: [

@@ -135,6 +135,7 @@ export const balances = pgTable(
     variantId: uuid("variant_id").references(() => variants.id),
     onHand: qty("on_hand"),
     reserved: qty("reserved"),
+    rollTracked: boolean("roll_tracked").notNull().default(false),
   },
   (t) => [
     check(
@@ -649,6 +650,147 @@ export const brandingFiles = pgTable(
     check(
       "branding_file_purpose",
       sql`${t.purpose} in ('Logo','Design proof','Reference')`,
+    ),
+  ],
+);
+
+export type FabricSegment = { start: string; end: string };
+export const fabricRolls = pgTable(
+  "fabric_rolls",
+  {
+    id: id(),
+    balanceId: uuid("balance_id")
+      .notNull()
+      .references(() => balances.id),
+    rollNumber: text("roll_number").notNull().unique(),
+    supplierId: uuid("supplier_id").references(() => suppliers.id),
+    purchaseReceiptId: uuid("purchase_receipt_id").references(
+      () => receipts.id,
+    ),
+    purchaseOrderItemId: uuid("purchase_order_item_id").references(
+      () => purchaseItems.id,
+    ),
+    supplierBatch: text("supplier_batch"),
+    supplierLot: text("supplier_lot"),
+    color: text().notNull(),
+    composition: text().notNull(),
+    widthCm: qty("width_cm"),
+    receivedLength: qty("received_length"),
+    physicalLength: qty("physical_length"),
+    remainingLength: qty("remaining_length"),
+    reservedLength: qty("reserved_length"),
+    usableSegments: jsonb("usable_segments")
+      .$type<FabricSegment[]>()
+      .notNull()
+      .default([]),
+    storageLocation: text("storage_location").notNull(),
+    notes: text(),
+    createdBy: uuid("created_by")
+      .notNull()
+      .references(() => users.id),
+    createdAt: time(),
+  },
+  (t) => [
+    check(
+      "fabric_roll_quantities",
+      sql`${t.widthCm}>0 and ${t.receivedLength}>0 and ${t.physicalLength}>=${t.receivedLength} and ${t.remainingLength}>=0 and ${t.remainingLength}<=${t.physicalLength} and ${t.reservedLength}>=0 and ${t.reservedLength}<=${t.remainingLength}`,
+    ),
+    check(
+      "fabric_roll_identity",
+      sql`length(trim(${t.rollNumber}))>0 and length(trim(${t.color}))>0 and length(trim(${t.composition}))>0 and length(trim(${t.storageLocation}))>0`,
+    ),
+    check(
+      "fabric_roll_receipt_pair",
+      sql`(${t.purchaseReceiptId} is null)=(${t.purchaseOrderItemId} is null)`,
+    ),
+  ],
+);
+export const fabricRollReservations = pgTable(
+  "fabric_roll_reservations",
+  {
+    id: id(),
+    rollId: uuid("roll_id")
+      .notNull()
+      .references(() => fabricRolls.id),
+    manufacturingOrderId: uuid("manufacturing_order_id")
+      .notNull()
+      .references(() => manufacturing.id),
+    materialReservationId: uuid("material_reservation_id")
+      .notNull()
+      .references(() => reservations.id),
+    quantity: qty("quantity"),
+    consumed: qty("consumed"),
+    released: qty("released"),
+    createdAt: time(),
+  },
+  (t) => [
+    uniqueIndex("fabric_roll_material_reservation").on(
+      t.rollId,
+      t.materialReservationId,
+    ),
+    check(
+      "fabric_roll_reservation_quantities",
+      sql`${t.quantity}>0 and ${t.consumed}>=0 and ${t.released}>=0 and ${t.consumed}+${t.released}<=${t.quantity}`,
+    ),
+  ],
+);
+export const fabricRollMovements = pgTable(
+  "fabric_roll_movements",
+  {
+    id: id(),
+    rollId: uuid("roll_id")
+      .notNull()
+      .references(() => fabricRolls.id),
+    inventoryMovementId: uuid("inventory_movement_id").references(
+      () => movements.id,
+    ),
+    manufacturingOrderId: uuid("manufacturing_order_id").references(
+      () => manufacturing.id,
+    ),
+    materialReservationId: uuid("material_reservation_id").references(
+      () => reservations.id,
+    ),
+    quantity: qty("quantity"),
+    reservedDelta: qty("reserved_delta"),
+    segments: jsonb().$type<FabricSegment[]>().notNull().default([]),
+    reason: text().notNull(),
+    source: text().notNull(),
+    operationKey: text("operation_key").notNull().unique(),
+    createdBy: uuid("created_by")
+      .notNull()
+      .references(() => users.id),
+    createdAt: time(),
+  },
+  (t) => [
+    check(
+      "fabric_roll_movement_nonempty",
+      sql`${t.quantity}<>0 or ${t.reservedDelta}<>0`,
+    ),
+  ],
+);
+export const fabricDefects = pgTable(
+  "fabric_defects",
+  {
+    id: id(),
+    rollId: uuid("roll_id")
+      .notNull()
+      .references(() => fabricRolls.id),
+    movementId: uuid("movement_id")
+      .notNull()
+      .unique()
+      .references(() => fabricRollMovements.id),
+    startMeter: qty("start_meter"),
+    endMeter: qty("end_meter"),
+    description: text().notNull(),
+    createdBy: uuid("created_by")
+      .notNull()
+      .references(() => users.id),
+    createdAt: time(),
+  },
+  (t) => [
+    check(
+      "fabric_defect_range",
+      sql`${t.startMeter}>=0 and ${t.endMeter}>${t.startMeter} and length(trim(${t.description}))>0`,
     ),
   ],
 );

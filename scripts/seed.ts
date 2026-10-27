@@ -142,6 +142,8 @@ await db().transaction(async (tx) => {
       .select()
       .from(s.balances)
       .where(eq(s.balances.materialId, m.id));
+    // Existing tracked fabric is real inventory, not development seed stock.
+    if (b.rollTracked) continue;
     const inserted = await tx
       .insert(s.movements)
       .values({
