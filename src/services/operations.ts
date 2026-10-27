@@ -8,6 +8,7 @@ import * as s from "@/db/schema";
 import { type Actor, authorize } from "@/lib/permissions";
 import { amount, quantity, orderSchema } from "@/lib/validation";
 import { discountedLineTotal } from "@/lib/money";
+import { cuttingAction, cuttingCompletion } from "@/services/cutting";
 import {
   planRolls,
   consumeRolls,
@@ -33,6 +34,9 @@ export function lineTotal(
   return discountedLineTotal(q, p, discount);
 }
 export const actions = [
+  "createCutting",
+  "completeCutting",
+  "cancelCutting",
   "adjust",
   "activateRollTracking",
   "registerRolls",
@@ -58,6 +62,9 @@ export const actions = [
 ] as const;
 export type BusinessAction = (typeof actions)[number];
 const resources: Record<BusinessAction, string> = {
+  createCutting: "manufacturing",
+  completeCutting: "manufacturing",
+  cancelCutting: "manufacturing",
   adjust: "inventory",
   activateRollTracking: "inventory",
   registerRolls: "inventory",
@@ -189,7 +196,11 @@ export async function execute(
     await tx
       .insert(s.operations)
       .values({ key, fingerprint, actorId: actor.id });
-    if (action === "adjust") {
+    if (
+      ["createCutting", "completeCutting", "cancelCutting"].includes(action)
+    ) {
+      await cuttingAction(tx, action, input, actor.id);
+    } else if (action === "adjust") {
       const v = z
         .object({
           itemId: z.uuid(),
@@ -855,6 +866,7 @@ export async function execute(
           .where(eq(s.manufacturing.id, id));
       } else if (action === "complete") {
         if (mo.status === "Completed") return;
+        input = await cuttingCompletion(tx, mo.id, input);
         if (mo.status !== "Quality Control")
           throw new Error("Production must pass through quality control");
         const v = z
@@ -1031,6 +1043,14 @@ export async function execute(
       } else {
         if (!["Draft", "Planned"].includes(mo.status))
           throw new Error("Only draft or planned production can be cancelled");
+        const cutting = await tx
+          .select()
+          .from(s.cuttingBatches)
+          .where(eq(s.cuttingBatches.orderId, id));
+        if (cutting.some((b) => b.status !== "Cancelled"))
+          throw new Error(
+            "Cancel planned cutting batches first; manufacturing with completed cutting cannot be cancelled",
+          );
         const reserved = await tx
           .select()
           .from(s.reservations)

@@ -655,6 +655,55 @@ export const brandingFiles = pgTable(
 );
 
 export type FabricSegment = { start: string; end: string };
+export const cuttingBatches = pgTable(
+  "cutting_batches",
+  {
+    id: id(),
+    orderId: uuid("order_id")
+      .notNull()
+      .references(() => manufacturing.id),
+    reservationId: uuid("reservation_id")
+      .notNull()
+      .references(() => reservations.id),
+    rollId: uuid("roll_id")
+      .notNull()
+      .references(() => fabricRolls.id),
+    specificationId: uuid("specification_id")
+      .notNull()
+      .references(() => specifications.id),
+    size: text().notNull(),
+    layout: text().notNull(),
+    rateSource: text("rate_source").notNull(),
+    quantity: integer().notNull(),
+    planned: qty("planned"),
+    status: text().notNull().default("Planned"),
+    result: jsonb().$type<{
+      issued: string;
+      incorporated: string;
+      waste: string;
+      returned: string;
+      piecesCut: number;
+      rejectedPieces: number;
+      consumed: string;
+      variance: string;
+      acceptedPieces: number;
+      efficiencyPercent: string | null;
+      wastePercent: string | null;
+      cutPieces: { part: string; quantity: number; rejected: number }[];
+    }>(),
+    createdBy: uuid("created_by")
+      .notNull()
+      .references(() => users.id),
+    completedBy: uuid("completed_by").references(() => users.id),
+    createdAt: time(),
+  },
+  (t) => [
+    check(
+      "cutting_batch_valid",
+      sql`${t.quantity}>0 and ${t.planned}>0 and ${t.status} in ('Planned','Completed','Cancelled') and (${t.status}='Completed')=(${t.result} is not null and ${t.completedBy} is not null)`,
+    ),
+  ],
+);
 export const fabricRolls = pgTable(
   "fabric_rolls",
   {

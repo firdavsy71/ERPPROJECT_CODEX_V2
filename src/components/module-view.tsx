@@ -715,6 +715,7 @@ export async function ModuleView({
           <p>
             {variantLabel(r.variantId)} · {r.quantity} planned units
           </p>
+          <p><Link href="/cutting">Cutting batches, layouts and fabric actuals</Link></p>
           {r.specificationId ? (
             <Link
               className="btn btn-outline"
