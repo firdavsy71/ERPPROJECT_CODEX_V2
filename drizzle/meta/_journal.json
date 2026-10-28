@@ -99,6 +99,13 @@
       "when": 1793132747243,
       "tag": "0013_quiet_penance",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1793157794168,
+      "tag": "0014_groovy_deathstrike",
+      "breakpoints": true
     }
   ]
 }

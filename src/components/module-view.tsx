@@ -262,6 +262,11 @@ export async function ModuleView({
             </dl>
             {module === "products" && (
               <>
+                {can(actor.role, "compliance.read") && (
+                  <Link className="btn btn-outline" href={`/compliance?productId=${r.id}`}>
+                    Certificates and compliance evidence
+                  </Link>
+                )}
                 <Link
                   className="btn btn-outline"
                   href={`/specifications?productId=${r.id}`}

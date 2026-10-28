@@ -3,6 +3,7 @@ export type Actor = { id: string; role: Role };
 const permissions: Record<Role, string[]> = {
   admin: ["*"],
   production: [
+    "compliance.read",
     "repairs.read",
     "repairs.work",
     "manufacturing",
@@ -13,6 +14,7 @@ const permissions: Record<Role, string[]> = {
     "returns.inspect",
   ],
   sales: [
+    "compliance.read",
     "repairs.read",
     "repairs.create",
     "returns.read",
@@ -28,6 +30,7 @@ const permissions: Record<Role, string[]> = {
     "branding.approve",
   ],
   inventory: [
+    "compliance.read",
     "repairs.read",
     "repairs.work",
     "returns.read",

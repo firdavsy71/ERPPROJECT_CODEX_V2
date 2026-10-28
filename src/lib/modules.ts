@@ -34,6 +34,7 @@ export const nav = [
   ["deliveries", "Shipping & delivery"],
   ["returns", "Returns & exchanges"],
   ["repairs", "Alterations & repairs"],
+  ["compliance", "Compliance & certificates"],
 ] as const;
 export const masterFields: Record<string, Field[]> = {
   products: [

@@ -82,6 +82,11 @@ export default async function SpecificationDetail({
   return (
     <>
       <div className="no-print">
+        {can(actor.role, "compliance.read") && (
+          <Link href={`/compliance?specificationId=${id}&productId=${version.productId}`}>
+            Certificates linked to this specification
+          </Link>
+        )}
         <Link href={`/products/${version.productId}`} className="back-link">
           ← Product
         </Link>

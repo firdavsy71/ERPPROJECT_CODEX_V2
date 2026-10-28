@@ -21,6 +21,41 @@ const money = (name: string) =>
   numeric(name, { precision: 18, scale: 2 }).notNull().default("0");
 const qty = (name: string) =>
   numeric(name, { precision: 18, scale: 4 }).notNull().default("0");
+export const safetyStandards = pgTable("safety_standards", {
+  id: id(), reference: text().notNull().unique(), title: text().notNull(),
+  notes: text(), active: boolean().notNull().default(true),
+  createdBy: uuid("created_by").notNull().references(() => users.id), createdAt: time(),
+});
+export const certifications = pgTable("certifications", {
+  id: id(), groupId: uuid("group_id").notNull(), version: integer().notNull(),
+  productId: uuid("product_id").notNull().references(() => products.id),
+  specificationId: uuid("specification_id").references(() => specifications.id),
+  standardId: uuid("standard_id").notNull().references(() => safetyStandards.id),
+  certificateNumber: text("certificate_number").notNull(), issuer: text().notNull(),
+  issueDate: text("issue_date").notNull(), expiryDate: text("expiry_date").notNull(),
+  scope: text().notNull(), status: text().notNull().default("Draft"),
+  createdBy: uuid("created_by").notNull().references(() => users.id),
+  approvedBy: uuid("approved_by").references(() => users.id),
+  approvedAt: timestamp("approved_at", {withTimezone:true}),
+  createdAt: time(),
+}, t => [
+  uniqueIndex("certification_group_version").on(t.groupId,t.version),
+  check("certification_version_positive",sql`${t.version} > 0`),
+  check("certification_status",sql`${t.status} in ('Draft','Approved','Revoked')`),
+]);
+export const certificationAttachments = pgTable("certification_attachments", {
+  id: id(), certificationId: uuid("certification_id").notNull().references(() => certifications.id),
+  kind: text().notNull(), name: text().notNull(), mime: text().notNull(), bytes: integer().notNull(),
+  data: text().notNull(), sha256: text().notNull(),
+  materialId: uuid("material_id").references(() => materials.id),
+  supplierId: uuid("supplier_id").references(() => suppliers.id),
+  createdBy: uuid("created_by").notNull().references(() => users.id), createdAt: time(),
+});
+export const certificationEvents = pgTable("certification_events", {
+  id: id(), certificationId: uuid("certification_id").notNull().references(() => certifications.id),
+  event: text().notNull(), notes: text().notNull(),
+  actorId: uuid("actor_id").notNull().references(() => users.id), createdAt: time(),
+});
 export const repairOrders = pgTable("repair_orders", {
   id: id(),
   number: text().notNull().unique(),

@@ -17,6 +17,7 @@ import { cuttingAction, cuttingCompletion } from "@/services/cutting";
 import { outsourcingAction } from "@/services/outsourcing";
 import { pricingAction, approveSalePricing } from "@/services/pricing";
 import { repairAction } from "@/services/repairs";
+import { complianceAction } from "@/services/compliance";
 import { shippingAction, deliveryCommitted } from "@/services/shipping";
 import {
   returnsAction,
@@ -48,6 +49,7 @@ export function lineTotal(
   return discountedLineTotal(q, p, discount);
 }
 export const actions = [
+  "createSafetyStandard", "editSafetyStandard", "archiveSafetyStandard", "createCertification", "editCertification", "reviseCertification", "approveCertification", "revokeCertification",
   "createRepair", "assignRepair", "repairStatus", "requireRepairMaterial", "consumeRepairMaterial", "recordRepairLabor",
   "confirmLegacyShipmentDelivery",
   "createReturn",
@@ -122,6 +124,14 @@ export const actions = [
 ] as const;
 export type BusinessAction = (typeof actions)[number];
 const resources: Record<BusinessAction, string> = {
+  createSafetyStandard: "compliance.manage",
+  editSafetyStandard: "compliance.manage",
+  archiveSafetyStandard: "compliance.manage",
+  createCertification: "compliance.manage",
+  editCertification: "compliance.manage",
+  reviseCertification: "compliance.manage",
+  approveCertification: "compliance.manage",
+  revokeCertification: "compliance.manage",
   createRepair: "repairs.create",
   assignRepair: "repairs.work",
   repairStatus: "repairs.work",
@@ -307,7 +317,9 @@ export async function execute(
     await tx
       .insert(s.operations)
       .values({ key, fingerprint, actorId: actor.id });
-    if (["createRepair", "assignRepair", "repairStatus", "requireRepairMaterial", "consumeRepairMaterial", "recordRepairLabor"].includes(action)) {
+    if (["createSafetyStandard","editSafetyStandard","archiveSafetyStandard","createCertification","editCertification","reviseCertification","approveCertification","revokeCertification"].includes(action)) {
+      await complianceAction(tx,action,input,actor.id);
+    } else if (["createRepair", "assignRepair", "repairStatus", "requireRepairMaterial", "consumeRepairMaterial", "recordRepairLabor"].includes(action)) {
       await repairAction(tx, action, input, {
         actorId: actor.id,
         consume: async (materialId, quantity, rollId) => {
