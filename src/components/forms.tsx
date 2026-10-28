@@ -7,6 +7,8 @@ import type { Field } from "@/lib/modules";
 import { businessAction, masterAction, type Result } from "@/app/actions";
 import type { MasterModule } from "@/services/master";
 import type { BusinessAction } from "@/services/operations";
+import { useLocale, useTranslations } from "next-intl";
+import { additionalLabels, labelKeys, resolveLocale } from "@/i18n/messages";
 type Option = { value: string; label: string };
 export type LineConfig = { name: string; label: string; fields: Field[] };
 export function ActionForm({
@@ -32,6 +34,13 @@ export function ActionForm({
   secondary?: boolean;
   initialLineCount?: number;
 }) {
+  const t = useTranslations("forms");
+  const common = useTranslations("common");
+  const locale = resolveLocale(useLocale());
+  const translate = (text: string) =>
+    labelKeys[text]
+      ? t(labelKeys[text])
+      : (additionalLabels[locale][text] ?? text);
   const dialog = useRef<HTMLDialogElement>(null);
   const [result, setResult] = useState<Result | null>(null);
   const [pending, start] = useTransition();
@@ -78,7 +87,9 @@ export function ActionForm({
     const n = (prefix + f.name).replaceAll(".", "__");
     const attrs = {
       ...register(n, {
-        required: f.required ? `${f.label} is required` : false,
+        required: f.required
+          ? `${translate(f.label)} ${common("required")}`
+          : false,
       }),
       defaultValue: defaults[n] ?? f.default ?? "",
       id: `${label}-${n}`,
@@ -86,12 +97,12 @@ export function ActionForm({
     return (
       <label key={n} className={f.type === "textarea" ? "field full" : "field"}>
         <span>
-          {f.label}
+          {translate(f.label)}
           {f.required ? " *" : ""}
         </span>
         {f.type === "select" ? (
           <select {...attrs}>
-            <option value="">Select…</option>
+            <option value="">{common("select")}</option>
             {f.options?.map((o: Option) => (
               <option key={o.value} value={o.value}>
                 {o.label}
@@ -125,7 +136,7 @@ export function ActionForm({
           dialog.current?.showModal();
         }}
       >
-        {secondary ? null : <Plus size={16} />} {label}
+        {secondary ? null : <Plus size={16} />} {translate(label)}
       </Button>
       {result?.ok && (
         <span role="status" className="success">
@@ -136,11 +147,11 @@ export function ActionForm({
         <div className="dialog-header">
           <div>
             <p className="eyebrow">WORKWEAR / OPERATIONS</p>
-            <h2>{title ?? label}</h2>
+            <h2>{translate(title ?? label)}</h2>
           </div>
           <Button
             variant="ghost"
-            aria-label="Close dialog"
+            aria-label={translate("Close dialog")}
             onClick={() => dialog.current?.close()}
           >
             <X size={20} />
@@ -150,7 +161,7 @@ export function ActionForm({
           <div className="form-grid">{fields.map((f) => field(f))}</div>
           {lines && (
             <div className="line-editor">
-              <h3>{lines.label}</h3>
+              <h3>{translate(lines.label)}</h3>
               {Array.from({ length: count }, (_, i) => (
                 <div className="line-row" key={i}>
                   <span className="line-number">{i + 1}</span>
@@ -166,7 +177,7 @@ export function ActionForm({
                   size="sm"
                   onClick={() => setCount((c) => c + 1)}
                 >
-                  <Plus size={14} /> Add line
+                  <Plus size={14} /> {translate("Add line")}
                 </Button>
                 {count > 1 && (
                   <Button
@@ -175,7 +186,7 @@ export function ActionForm({
                     size="sm"
                     onClick={() => setCount((c) => c - 1)}
                   >
-                    <Trash2 size={14} /> Remove last
+                    <Trash2 size={14} /> {translate("Remove last")}
                   </Button>
                 )}
               </div>
@@ -192,10 +203,10 @@ export function ActionForm({
               variant="outline"
               onClick={() => dialog.current?.close()}
             >
-              Cancel
+              {common("cancel")}
             </Button>
             <Button disabled={pending}>
-              {pending ? "Saving…" : "Save record"}
+              {pending ? translate("Saving…") : common("save")}
             </Button>
           </div>
         </form>

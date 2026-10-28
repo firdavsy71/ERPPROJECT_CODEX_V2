@@ -12,6 +12,10 @@ import {
 } from "@tanstack/react-table";
 import { ArrowUpDown, Search, ChevronLeft, ChevronRight } from "lucide-react";
 import { Button } from "./ui/button";
+import { useLocale, useTranslations } from "next-intl";
+import { additionalLabels, labelKeys, resolveLocale } from "@/i18n/messages";
+import { formatTimestamp } from "@/i18n/format";
+import { useBusinessTimeZone } from "@/components/regional-provider";
 export type Row = Record<string, string | number | boolean | null | undefined>;
 export function DataTable({
   rows,
@@ -23,13 +27,20 @@ export function DataTable({
   href?: string;
 }) {
   "use no memo";
+  const t = useTranslations("forms");
+  const common = useTranslations("common");
+  const locale = resolveLocale(useLocale());
+  const timeZone = useBusinessTimeZone();
   const [search, setSearch] = useState("");
   const [sorting, setSorting] = useState<SortingState>([]);
   const defs = useMemo(
     () =>
       columns.map((c, i) => ({
         accessorKey: c.key,
-        header: c.label,
+        header: labelKeys[c.label]
+          ? t(labelKeys[c.label])
+          : (additionalLabels[locale][c.label] ??
+            c.label.replace("(UTC)", `(${timeZone})`)),
         cell: ({
           getValue,
           row,
@@ -37,7 +48,12 @@ export function DataTable({
           getValue: () => unknown;
           row: { original: Row };
         }) => {
-          const value = String(getValue() ?? "—");
+          const raw = String(getValue() ?? "—");
+          const value = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(
+            raw,
+          )
+            ? formatTimestamp(raw, locale, timeZone)
+            : raw;
           if (c.key === "status")
             return (
               <span
@@ -55,7 +71,7 @@ export function DataTable({
           );
         },
       })),
-    [columns, href],
+    [columns, href, t, locale, timeZone],
   );
   const table = useReactTable({
     data: rows,
@@ -75,14 +91,14 @@ export function DataTable({
         <div className="search-input">
           <Search size={16} />
           <input
-            aria-label="Search records"
-            placeholder="Search records…"
+            aria-label={common("search")}
+            placeholder={common("search")}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
         </div>
         <span className="muted">
-          {table.getFilteredRowModel().rows.length} records
+          {table.getFilteredRowModel().rows.length} {common("records")}
         </span>
       </div>
       <div className="table-scroll">

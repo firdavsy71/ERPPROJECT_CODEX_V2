@@ -13,6 +13,11 @@ function queryRows(result: unknown): Record<string, unknown>[] {
   throw new Error("Unsupported database result shape");
 }
 export async function overview() {
+  const [settings] = await db()
+    .select({ timezone: s.settings.timezone })
+    .from(s.settings)
+    .limit(1);
+  const timezone = settings?.timezone ?? "Asia/Tashkent";
   const rows = await db().execute(sql`select
  (select count(*) from sales_orders where status not in ('Completed','Cancelled')) as pending,
  (select count(*) from manufacturing_orders where status not in ('Completed','Cancelled')) as active,
@@ -22,7 +27,7 @@ export async function overview() {
     sql`select so.currency,coalesce(sum(i.total),0)::text as total,coalesce(sum(greatest(i.total-i.paid-(select coalesce(sum(c.amount),0) from return_credit_notes c where c.invoice_id=i.id)+(select coalesce(sum(r.amount),0) from return_refunds r where r.invoice_id=i.id),0)),0)::text as outstanding from invoices i join sales_orders so on so.id=i.order_id group by so.currency`,
   );
   const trends = await db().execute(
-    sql`select to_char(i.created_at at time zone 'UTC','YYYY-MM') as month,so.currency,sum(i.total)::text as revenue from invoices i join sales_orders so on so.id=i.order_id group by 1,2 order by 1`,
+    sql`select to_char(i.created_at at time zone ${timezone},'YYYY-MM') as month,so.currency,sum(i.total)::text as revenue from invoices i join sales_orders so on so.id=i.order_id group by 1,2 order by 1`,
   );
   return {
     kpis: queryRows(rows)[0],

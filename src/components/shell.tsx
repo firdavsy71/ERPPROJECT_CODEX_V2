@@ -26,6 +26,8 @@ import {
 import { nav } from "@/lib/modules";
 import { can, type Role } from "@/lib/permissions";
 import { logoutAction } from "@/app/actions";
+import { useTranslations } from "next-intl";
+import { LanguageSelector } from "@/components/language-selector";
 const icons = [
   LayoutDashboard,
   ShoppingBag,
@@ -52,6 +54,8 @@ export function Shell({
   role: string;
 }) {
   const pathname = usePathname();
+  const t = useTranslations("nav");
+  const common = useTranslations("common");
   const [collapsed, setCollapsed] = useState(false);
   const [dark, setDark] = useState(false);
   const active = pathname.split("/")[1];
@@ -76,9 +80,9 @@ export function Shell({
           </div>
           <ArrowUpRight size={14} />
         </div>
-        <p className="nav-heading">WORKSPACE</p>
+        <p className="nav-heading">{common("workspace")}</p>
         <nav>
-          {nav.map(([path, label], i) => {
+          {nav.map(([path], i) => {
             if (path === "compliance" && !can(role as Role, "compliance.read"))
               return null;
             if (path === "repairs" && !can(role as Role, "repairs.read"))
@@ -99,17 +103,18 @@ export function Shell({
               <Link
                 key={path}
                 href={`/${path}`}
-                title={label}
+                title={t(path)}
                 className={active === path ? "active" : ""}
               >
                 <Icon size={18} />
-                <span>{label}</span>
+                <span>{t(path)}</span>
                 {active === path && <span className="nav-dot" />}
               </Link>
             );
           })}
         </nav>
         <div className="sidebar-bottom">
+          <LanguageSelector />
           <span className="avatar">{name.slice(0, 1).toUpperCase()}</span>
           <div>
             <strong>{name}</strong>
@@ -131,10 +136,10 @@ export function Shell({
             >
               <PanelLeftClose size={19} />
             </button>
-            <span>Workspace</span>
+            <span>{common("workspace")}</span>
             <span>/</span>
             <strong>
-              {nav.find((n) => n[0] === active)?.[1] ?? "Overview"}
+              {nav.some((n) => n[0] === active) ? t(active) : t("dashboard")}
             </strong>
           </div>
           <div className="topbar-right">

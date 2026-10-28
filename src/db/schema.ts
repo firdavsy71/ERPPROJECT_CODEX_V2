@@ -524,6 +524,9 @@ export const settings = pgTable("company_settings", {
   address: text(),
   email: text(),
   phone: text(),
+  taxId: text("tax_id"),
+  registrationNumber: text("registration_number"),
+  bankDetails: text("bank_details"),
 });
 export const audit = pgTable("audit_logs", {
   id: id(),

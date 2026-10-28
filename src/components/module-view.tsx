@@ -19,9 +19,12 @@ import { ActionForm } from "./forms";
 import { DataTable, type Row } from "./data-table";
 import { ArchiveButton } from "./archive-button";
 import { RevenueChart } from "./revenue-chart";
-import { masterFields, nav, type Field } from "@/lib/modules";
+import { masterFields, type Field } from "@/lib/modules";
 import { can, type Actor } from "@/lib/permissions";
-import { formatMoney } from "@/lib/utils";
+import { formatMoney as baseFormatMoney } from "@/lib/utils";
+import { currentLocale } from "@/i18n/server";
+import { messages } from "@/i18n/messages";
+import { businessDate, formatDateOnly, formatTimestamp } from "@/i18n/format";
 import { type Data, overview } from "@/services/queries";
 import type { MasterModule } from "@/services/master";
 const descriptions: Record<string, string> = {
@@ -67,7 +70,11 @@ export async function ModuleView({
   actor: Actor;
   recordId?: string;
 }) {
-  const title = nav.find((n) => n[0] === module)?.[1] ?? module;
+  const locale = await currentLocale();
+  const dictionary = messages[locale];
+  const title = dictionary.nav[module as keyof typeof dictionary.nav] ?? module;
+  const formatMoney = (value: string | number, currency?: string) =>
+    baseFormatMoney(value, currency, locale);
   const approvedSpecifications = await db()
     .select({
       id: specifications.id,
@@ -263,7 +270,10 @@ export async function ModuleView({
             {module === "products" && (
               <>
                 {can(actor.role, "compliance.read") && (
-                  <Link className="btn btn-outline" href={`/compliance?productId=${r.id}`}>
+                  <Link
+                    className="btn btn-outline"
+                    href={`/compliance?productId=${r.id}`}
+                  >
                     Certificates and compliance evidence
                   </Link>
                 )}
@@ -1050,9 +1060,19 @@ export async function ModuleView({
       createdAt: undefined,
       order: d.sales.find((o) => o.id === i.orderId)?.number,
       currency: d.sales.find((o) => o.id === i.orderId)?.currency,
-      outstanding: returnPosition(i).due,
+      total: formatMoney(
+        i.total,
+        d.sales.find((o) => o.id === i.orderId)?.currency ?? currency,
+      ),
+      dueDate: formatDateOnly(i.dueDate, locale),
+      outstanding: formatMoney(
+        returnPosition(i).due,
+        d.sales.find((o) => o.id === i.orderId)?.currency ?? currency,
+      ),
       status:
-        i.status !== "Paid" && i.dueDate < new Date().toISOString().slice(0, 10)
+        i.status !== "Paid" &&
+        i.dueDate <
+          businessDate(new Date(), d.settings[0]?.timezone ?? "Asia/Tashkent")
           ? "Overdue"
           : i.status,
     }));
@@ -1071,7 +1091,8 @@ export async function ModuleView({
         <>
           <h2>{r.number}</h2>
           <p>
-            {d.settings[0]?.name} · Due {r.dueDate}
+            {d.settings[0]?.name} · {dictionary.invoice.dueDate}{" "}
+            {formatDateOnly(r.dueDate, locale)}
           </p>
           {can(actor.role, "returns.read") && (
             <p>
@@ -1081,27 +1102,78 @@ export async function ModuleView({
             </p>
           )}
           <p>
-            Credit notes: {returnPosition(r).credited} · External refunds:{" "}
-            {returnPosition(r).refunded} · Adjusted invoice:{" "}
-            {returnPosition(r).adjusted} · Due: {returnPosition(r).due} ·
-            Customer credit balance: {returnPosition(r).creditBalance}
+            <Link className="btn btn-outline" href={`/invoices/${r.id}/print`}>
+              {dictionary.common.print}
+            </Link>
+          </p>
+          <p>
+            {dictionary.invoice.credit}:{" "}
+            {locale === "en"
+              ? returnPosition(r).credited
+              : formatMoney(
+                  returnPosition(r).credited,
+                  d.sales.find((o) => o.id === r.orderId)?.currency ?? currency,
+                )}{" "}
+            · {dictionary.invoice.refunds}:{" "}
+            {locale === "en"
+              ? returnPosition(r).refunded
+              : formatMoney(
+                  returnPosition(r).refunded,
+                  d.sales.find((o) => o.id === r.orderId)?.currency ?? currency,
+                )}{" "}
+            · {dictionary.invoice.adjusted}:{" "}
+            {locale === "en"
+              ? returnPosition(r).adjusted
+              : formatMoney(
+                  returnPosition(r).adjusted,
+                  d.sales.find((o) => o.id === r.orderId)?.currency ?? currency,
+                )}{" "}
+            · {dictionary.invoice.due}:{" "}
+            {locale === "en"
+              ? returnPosition(r).due
+              : formatMoney(
+                  returnPosition(r).due,
+                  d.sales.find((o) => o.id === r.orderId)?.currency ?? currency,
+                )}{" "}
+            ·{dictionary.invoice.balance}:{" "}
+            {locale === "en"
+              ? returnPosition(r).creditBalance
+              : formatMoney(
+                  returnPosition(r).creditBalance,
+                  d.sales.find((o) => o.id === r.orderId)?.currency ?? currency,
+                )}
           </p>
           <dl className="record-grid">
             <div>
-              <dt>Subtotal</dt>
-              <dd>{r.subtotal}</dd>
+              <dt>{dictionary.invoice.subtotal}</dt>
+              <dd>
+                {formatMoney(
+                  r.subtotal,
+                  d.sales.find((o) => o.id === r.orderId)?.currency ?? currency,
+                )}
+              </dd>
             </div>
             <div>
-              <dt>Tax rate</dt>
+              <dt>{dictionary.forms.taxRate}</dt>
               <dd>{r.taxRate}%</dd>
             </div>
             <div>
-              <dt>Total</dt>
-              <dd>{r.total}</dd>
+              <dt>{dictionary.invoice.total}</dt>
+              <dd>
+                {formatMoney(
+                  r.total,
+                  d.sales.find((o) => o.id === r.orderId)?.currency ?? currency,
+                )}
+              </dd>
             </div>
             <div>
-              <dt>Gross payments received</dt>
-              <dd>{r.paid}</dd>
+              <dt>{dictionary.invoice.payments}</dt>
+              <dd>
+                {formatMoney(
+                  r.paid,
+                  d.sales.find((o) => o.id === r.orderId)?.currency ?? currency,
+                )}
+              </dd>
             </div>
           </dl>
           {editable && new Decimal(returnPosition(r).due).gt(0) && (
@@ -1115,11 +1187,18 @@ export async function ModuleView({
               ]}
             />
           )}
-          <h3>Return credit notes</h3>
+          <h3>{dictionary.invoice.creditHistory}</h3>
           <DataTable
             rows={d.returnCredits
               .filter((c) => c.invoiceId === r.id)
-              .map((c) => ({ ...c, createdAt: c.createdAt.toISOString() }))}
+              .map((c) => ({
+                ...c,
+                createdAt: formatTimestamp(
+                  c.createdAt,
+                  locale,
+                  d.settings[0]?.timezone ?? "Asia/Tashkent",
+                ),
+              }))}
             columns={columns(
               "number|Credit note",
               "quantity|Units credited",
@@ -1127,11 +1206,18 @@ export async function ModuleView({
               "createdAt|Issued (UTC)",
             )}
           />
-          <h3>Externally paid refunds</h3>
+          <h3>{dictionary.invoice.refundHistory}</h3>
           <DataTable
             rows={d.returnRefunds
               .filter((c) => c.invoiceId === r.id)
-              .map((c) => ({ ...c, createdAt: c.createdAt.toISOString() }))}
+              .map((c) => ({
+                ...c,
+                createdAt: formatTimestamp(
+                  c.createdAt,
+                  locale,
+                  d.settings[0]?.timezone ?? "Asia/Tashkent",
+                ),
+              }))}
             columns={columns(
               "reference|Payment reference",
               "amount|Amount",
@@ -1139,11 +1225,18 @@ export async function ModuleView({
               "createdAt|Recorded (UTC)",
             )}
           />
-          <h3>Payment history</h3>
+          <h3>{dictionary.invoice.history}</h3>
           <DataTable
             rows={d.payments
               .filter((p) => p.invoiceId === r.id)
-              .map((p) => ({ ...p, createdAt: p.createdAt.toISOString() }))}
+              .map((p) => ({
+                ...p,
+                createdAt: formatTimestamp(
+                  p.createdAt,
+                  locale,
+                  d.settings[0]?.timezone ?? "Asia/Tashkent",
+                ),
+              }))}
             columns={columns(
               "reference|Reference",
               "amount|Amount",
@@ -1157,7 +1250,7 @@ export async function ModuleView({
     extra = (
       <>
         <section className="detail-card">
-          <h2>Company settings</h2>
+          <h2>{dictionary.common.settings}</h2>
           <p>
             {d.settings[0]?.name} · {currency} · {d.settings[0]?.timezone}
           </p>
@@ -1220,7 +1313,7 @@ export async function ModuleView({
         <div className="page-heading">
           <div>
             <p className="eyebrow">INSIGHTS / LIVE DATA</p>
-            <h1>Reports</h1>
+            <h1>{dictionary.reports.title}</h1>
             <p className="muted">
               Export persisted records for review. Currency values remain
               separated.
@@ -1245,9 +1338,9 @@ export async function ModuleView({
               <span className="report-icon">
                 <ArrowUpRight size={20} />
               </span>
-              <h2>{m.charAt(0).toUpperCase() + m.slice(1)}</h2>
-              <p>Download current records as CSV</p>
-              <span className="text-link">Export report ↗</span>
+              <h2>{dictionary.nav[m as keyof typeof dictionary.nav] ?? m}</h2>
+              <p>{dictionary.reports.export}</p>
+              <span className="text-link">{dictionary.reports.export} ↗</span>
             </Link>
           ))}
         </div>

@@ -65,6 +65,9 @@ const schemas = {
     address: optional,
     email,
     phone: optional,
+    taxId: optional,
+    registrationNumber: optional,
+    bankDetails: optional,
   }),
 };
 export type MasterModule = keyof typeof schemas;

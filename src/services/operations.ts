@@ -40,7 +40,8 @@ import {
   checkBrandedShipment,
 } from "@/services/branding";
 type Tx = Parameters<Parameters<ReturnType<typeof db>["transaction"]>[0]>[0];
-const num = (v: Decimal.Value) => new Decimal(v);
+const Arithmetic = Decimal.clone({precision:40});
+const num = (v: Decimal.Value) => new Arithmetic(v);
 export function lineTotal(
   q: Decimal.Value,
   p: Decimal.Value,

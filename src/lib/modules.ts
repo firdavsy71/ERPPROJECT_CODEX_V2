@@ -153,5 +153,8 @@ export const masterFields: Record<string, Field[]> = {
     { name: "address", label: "Address" },
     { name: "email", label: "Email", type: "email" },
     { name: "phone", label: "Phone" },
+    { name: "taxId", label: "Tax identification number" },
+    { name: "registrationNumber", label: "Company registration number" },
+    { name: "bankDetails", label: "Bank details", type: "textarea" },
   ],
 };

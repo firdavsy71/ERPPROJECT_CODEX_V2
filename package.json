@@ -4,7 +4,9 @@
   "private": true,
   "type": "module",
   "overrides": {
-    "@vercel/cli-config": { "zod": "^4.6.7" }
+    "@vercel/cli-config": {
+      "zod": "^4.6.7"
+    }
   },
   "scripts": {
     "dev": "next dev --hostname 0.0.0.0",
@@ -36,6 +38,7 @@
     "lucide-react": "^0.468.0",
     "next": "^16.0.0",
     "next-auth": "^5.0.0-beta.32",
+    "next-intl": "^4.14.9",
     "postgres": "^3.4.7",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",

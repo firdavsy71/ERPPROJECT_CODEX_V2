@@ -106,6 +106,13 @@
       "when": 1793157794168,
       "tag": "0014_groovy_deathstrike",
       "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1793158389623,
+      "tag": "0015_easy_carlie_cooper",
+      "breakpoints": true
     }
   ]
 }
