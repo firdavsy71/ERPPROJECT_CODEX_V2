@@ -4,6 +4,7 @@ import { currentActor } from "@/auth";
 import { data } from "@/services/queries";
 import { ModuleView } from "@/components/module-view";
 import { z } from "zod";
+import { canReadModule } from "@/lib/permissions";
 export default async function DetailPage({
   params,
 }: {
@@ -17,6 +18,7 @@ export default async function DetailPage({
     notFound();
   const actor = await currentActor();
   if (!actor) redirect("/login");
+  if (!canReadModule(actor.role, module)) notFound();
   if (module === "users" && actor.role !== "admin") notFound();
   return (
     <ModuleView module={module} recordId={id} d={await data()} actor={actor} />

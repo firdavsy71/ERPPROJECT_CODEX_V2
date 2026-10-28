@@ -58,3 +58,36 @@ export function authorize(actor: Actor, resource: string) {
   if (!can(actor.role, resource))
     throw new Error("You do not have permission for this operation.");
 }
+export function canReadModule(role: Role, module: string) {
+  if (module === "dashboard") return true;
+  if (module === "reports")
+    return [
+      "sales",
+      "manufacturing",
+      "materials",
+      "inventory",
+      "purchases",
+      "invoices",
+      "movements",
+    ].some((m) => canExportReport(role, m));
+  if (module === "users" || module === "settings") return can(role, "settings");
+  if (can(role, module)) return true;
+  const readOnly: Partial<Record<Role, string[]>> = {
+    production: ["products", "materials", "inventory", "employees"],
+    sales: ["products"],
+    inventory: ["products"],
+  };
+  return readOnly[role]?.includes(module) ?? false;
+}
+export function canExportReport(role: Role, report: string) {
+  const resource: Record<string, string> = {
+    sales: "sales",
+    manufacturing: "manufacturing",
+    materials: "materials",
+    inventory: "inventory",
+    purchases: "purchases",
+    invoices: "invoices",
+    movements: "inventory",
+  };
+  return !!resource[report] && can(role, resource[report]);
+}

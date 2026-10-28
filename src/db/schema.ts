@@ -567,6 +567,7 @@ export const payments = pgTable(
 export const settings = pgTable("company_settings", {
   id: integer().primaryKey().default(1),
   name: text().notNull().default("Workwear ERP"),
+  primaryWarehouseId: uuid("primary_warehouse_id").references(()=>warehouses.id),
   currency: text().notNull().default("UZS"),
   timezone: text().notNull().default("Asia/Tashkent"),
   taxRate: money("tax_rate"),

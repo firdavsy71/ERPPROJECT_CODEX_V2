@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { hash } from "bcryptjs";
-import { eq } from "drizzle-orm";
+import { eq,gt } from "drizzle-orm";
 import { db } from "@/db";
 import * as s from "@/db/schema";
 import { type Actor, authorize } from "@/lib/permissions";
@@ -52,6 +52,7 @@ const schemas = {
   }),
   settings: z.object({
     name,
+    primaryWarehouseId:z.uuid().optional().or(z.literal("")).transform(v=>v || undefined),
     currency: z.enum(["UZS", "USD"]),
     timezone: z.string().refine((v) => {
       try {
@@ -93,6 +94,11 @@ export async function saveMaster(
       });
     } else if (module === "settings") {
       const v = schemas.settings.parse(input);
+      const [previous]=await tx.select().from(s.settings).where(eq(s.settings.id,1)).for("update");
+      if(v.primaryWarehouseId && v.primaryWarehouseId!==previous?.primaryWarehouseId) {
+        const held=await tx.select({id:s.balances.id}).from(s.balances).where(gt(s.balances.reserved,"0")).limit(1);
+        if(held.length) throw new Error("Release outstanding reservations before changing the primary operational warehouse.");
+      }
       await tx
         .insert(s.settings)
         .values({ id: 1, ...v })

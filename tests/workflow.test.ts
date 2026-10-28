@@ -15,6 +15,8 @@ import { overview } from "../src/services/queries";
 import type { Actor } from "../src/lib/permissions";
 import { approvedSpec } from "./spec-fixture";
 import { pricingDay } from "../src/services/pricing";
+import { checkConsistency } from "../src/services/consistency";
+import { canExportReport, canReadModule } from "../src/lib/permissions";
 import {
   uploadDeliveryProof,
   readDeliveryProof,
@@ -127,6 +129,180 @@ async function production(quantity = 10) {
   return mo;
 }
 describe("Critical PostgreSQL workflows", () => {
+  it("connects customer demand to shortage, purchasing, production QC, managed shipment and paid invoice with reconciled ledgers", async () => {
+    await act("sale", {
+      partyId: customer,
+      currency: "UZS",
+      lines: [{ itemId: variant, quantity: "10", price: "100", discount: "0" }],
+    });
+    const [so] = await db().select().from(s.sales);
+    const [si] = await db().select().from(s.saleItems);
+    await act("manufacture", { bomId: bom, quantity: 10, saleItemId: si.id });
+    const [mo] = await db().select().from(s.manufacturing);
+    await expect(act("plan", { id: mo.id })).rejects.toThrow("Confirm");
+    await act("confirmSale", { id: so.id });
+    await act("reserveSale", { id: so.id });
+    const failedKey = randomUUID();
+    await expect(act("plan", { id: mo.id }, failedKey)).rejects.toThrow(
+      "Insufficient",
+    );
+    expect(await db().select().from(s.reservations)).toHaveLength(0);
+    expect(
+      await db()
+        .select()
+        .from(s.operations)
+        .where(eq(s.operations.key, failedKey)),
+    ).toHaveLength(0);
+    await act("purchase", {
+      partyId: supplier,
+      currency: "UZS",
+      date: "2099-01-01",
+      lines: [{ itemId: material, quantity: "25", price: "10" }],
+    });
+    const [po] = await db().select().from(s.purchases);
+    const [pi] = await db().select().from(s.purchaseItems);
+    await act("orderPurchase", { id: po.id });
+    const receive = { id: po.id, lines: [{ id: pi.id, quantity: "25" }] },
+      receiveKey = randomUUID();
+    await execute(
+      { ...actor, role: "inventory" },
+      "receive",
+      receive,
+      receiveKey,
+    );
+    await execute(
+      { ...actor, role: "inventory" },
+      "receive",
+      receive,
+      receiveKey,
+    );
+    const [receiptLine] = await db().select().from(s.purchaseReceiptItems);
+    await act("inspectProcurement", {
+      receiptItemId: receiptLine.id,
+      accepted: "25",
+      rejected: "0",
+      notes: "Incoming fabric passed",
+    });
+    await act("plan", { id: mo.id });
+    await act("start", { id: mo.id });
+    expect(
+      await db()
+        .select()
+        .from(s.balances)
+        .where(eq(s.balances.variantId, variant)),
+    ).toHaveLength(1);
+    expect(
+      (
+        await db()
+          .select()
+          .from(s.balances)
+          .where(eq(s.balances.variantId, variant))
+      )[0].onHand,
+    ).toBe("0.0000");
+    await act("record", { id: mo.id, completed: 10, defective: 0 });
+    await act("complete", { id: mo.id, approved: 10 });
+    await act("reserveSale", { id: so.id });
+    await act("createDelivery", {
+      orderId: so.id,
+      address: "Customer receiving gate",
+      carrier: "Carrier",
+      lines: [{ saleItemId: si.id, quantity: 10 }],
+    });
+    const [delivery] = await db().select().from(s.deliveryOrders);
+    const [dl] = await db().select().from(s.deliveryItems);
+    await act("recordDeliveryPacking", {
+      id: delivery.id,
+      lineId: dl.id,
+      picked: 10,
+      packed: 10,
+      notes: "Counted and packed",
+    });
+    const dispatchKey = randomUUID();
+    await act("dispatchDelivery", { id: delivery.id }, dispatchKey);
+    await act("dispatchDelivery", { id: delivery.id }, dispatchKey);
+    expect(Number((await overview()).kpis.pending)).toBe(0);
+    await act("updateDeliveryStatus", {
+      id: delivery.id,
+      status: "Delivered",
+      notes: "Recipient confirmed delivery",
+    });
+    await act("invoice", { id: so.id, dueDate: "2099-01-01", taxRate: "12" });
+    const [invoice] = await db().select().from(s.invoices);
+    expect(invoice.total).toBe("1120.00");
+    await act("pay", {
+      id: invoice.id,
+      amount: "1120",
+      reference: "INTEGRATION-BANK",
+    });
+    expect((await db().select().from(s.sales))[0].status).toBe("Completed");
+    expect((await overview()).revenue[0].outstanding).toBe("0.00");
+    expect(await checkConsistency()).toEqual(
+      expect.arrayContaining([{ check: "stock_ledger", violations: 0 }]),
+    );
+    expect((await checkConsistency()).filter((c) => c.violations > 0)).toEqual(
+      [],
+    );
+  });
+  it("counts low stock once per material and protects financial module/report reads", async () => {
+    await stock("3");
+    const [other] = await db()
+      .insert(s.warehouses)
+      .values({ name: "Second" })
+      .returning();
+    await db()
+      .insert(s.balances)
+      .values({ warehouseId: other.id, materialId: material, onHand: "3" });
+    expect(Number((await overview()).kpis.low)).toBe(0);
+    expect(canExportReport("viewer", "invoices")).toBe(false);
+    expect(canExportReport("production", "invoices")).toBe(false);
+    expect(canExportReport("inventory", "movements")).toBe(true);
+    expect(canReadModule("production", "invoices")).toBe(false);
+    expect(canReadModule("inventory", "settings")).toBe(false);
+    expect(canReadModule("sales", "invoices")).toBe(true);
+    await expect(
+      db()
+        .update(s.materials)
+        .set({ unit: "Pieces" })
+        .where(eq(s.materials.id, material)),
+    ).rejects.toThrow();
+    await expect(
+      db()
+        .update(s.variants)
+        .set({ size: "XL" })
+        .where(eq(s.variants.id, variant)),
+    ).rejects.toThrow();
+    expect(
+      (await checkConsistency()).find((c) => c.check === "stock_ledger")
+        ?.violations,
+    ).toBe(1);
+  });
+  it("requires an explicit operational warehouse when multiple warehouses exist", async () => {
+    const [second] = await db()
+      .insert(s.warehouses)
+      .values({ name: "Second" })
+      .returning();
+    await expect(stock("5")).rejects.toThrow("primary operational warehouse");
+    await db()
+      .insert(s.settings)
+      .values({ id: 1, name: "Company", primaryWarehouseId: warehouse })
+      .onConflictDoUpdate({
+        target: s.settings.id,
+        set: { primaryWarehouseId: warehouse },
+      });
+    await stock("25");
+    expect((await db().select().from(s.balances))[0].warehouseId).toBe(
+      warehouse,
+    );
+    const mo = await production(10);
+    await act("plan", { id: mo.id });
+    await expect(saveMaster(actor,"settings",{name:"Company",currency:"UZS",timezone:"Asia/Tashkent",taxRate:"0",primaryWarehouseId:second.id})).rejects.toThrow("Release outstanding reservations");
+    await expect(
+      db()
+        .update(s.settings)
+        .set({ primaryWarehouseId: second.id })
+        .where(eq(s.settings.id, 1)),
+    ).rejects.toThrow();
+  });
   it("picks and packs reserved goods, dispatches partial orders once, and never restores dispatched stock on cancellation", async () => {
     await act("adjust", {
       itemId: variant,

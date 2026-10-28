@@ -24,7 +24,7 @@ import {
   ArrowUpRight,
 } from "lucide-react";
 import { nav } from "@/lib/modules";
-import { can, type Role } from "@/lib/permissions";
+import { can, canReadModule, type Role } from "@/lib/permissions";
 import { logoutAction } from "@/app/actions";
 import { useTranslations } from "next-intl";
 import { LanguageSelector } from "@/components/language-selector";
@@ -83,6 +83,7 @@ export function Shell({
         <p className="nav-heading">{common("workspace")}</p>
         <nav>
           {nav.map(([path], i) => {
+            if(["dashboard","sales","customers","products","manufacturing","boms","materials","inventory","purchases","suppliers","invoices","reports","employees","settings"].includes(path) && !canReadModule(role as Role,path)) return null;
             if (path === "supplier-performance" && !can(role as Role, "purchases"))
               return null;
             if (path === "compliance" && !can(role as Role, "compliance.read"))

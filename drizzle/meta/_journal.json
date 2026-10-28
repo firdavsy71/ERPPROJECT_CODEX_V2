@@ -134,6 +134,20 @@
       "when": 1793164073127,
       "tag": "0018_nifty_screwball",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1793164902591,
+      "tag": "0019_cross_module_identity",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1793165270164,
+      "tag": "0020_yielding_stepford_cuckoos",
+      "breakpoints": true
     }
   ]
 }

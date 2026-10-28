@@ -1,0 +1,10 @@
+import { config } from "dotenv";
+config({ path: ".env.local", quiet: true });
+config({ quiet: true });
+const { checkConsistency } = await import("../src/services/consistency");
+const { localClient, neonClient } = await import("../src/db");
+const checks = await checkConsistency();
+console.log(JSON.stringify({ checks }, null, 2));
+await localClient()?.close();
+await neonClient()?.end();
+process.exit(checks.some((c) => c.violations > 0) ? 1 : 0);

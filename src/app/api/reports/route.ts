@@ -4,9 +4,12 @@ import Decimal from "decimal.js";
 import { currentLocale } from "@/i18n/server";
 import { messages } from "@/i18n/messages";
 import { formatTimestamp } from "@/i18n/format";
+import { canExportReport } from "@/lib/permissions";
+import { db } from "@/db";
+import { movements } from "@/db/schema";
 export async function GET(request: Request) {
-  if (!(await currentActor()))
-    return new Response("Unauthorized", { status: 401 });
+  const actor = await currentActor();
+  if (!actor) return new Response("Unauthorized", { status: 401 });
   const name = new URL(request.url).searchParams.get("report") ?? "";
   if (
     ![
@@ -20,6 +23,8 @@ export async function GET(request: Request) {
     ].includes(name)
   )
     return new Response("Unknown report", { status: 400 });
+  if (!canExportReport(actor.role, name))
+    return new Response("Forbidden", { status: 403 });
   const d = await data();
   const locale = await currentLocale();
   const labels = messages[locale].reports;
@@ -37,6 +42,8 @@ export async function GET(request: Request) {
             netPaid = new Decimal(i.paid).minus(refunded);
           return {
             ...i,
+            currency: d.sales.find((o) => o.id === i.orderId)?.currency,
+            orderNumber: d.sales.find((o) => o.id === i.orderId)?.number,
             credited: credited.toFixed(2),
             refunded: refunded.toFixed(2),
             adjustedTotal: adjusted.toFixed(2),
@@ -48,7 +55,9 @@ export async function GET(request: Request) {
             ).toFixed(2),
           };
         })
-      : d[name === "inventory" ? "balances" : (name as "sales")];
+      : name === "movements"
+        ? await db().select().from(movements)
+        : d[name === "inventory" ? "balances" : (name as "sales")];
   const keys = Object.keys(rows[0] ?? {});
   const escape = (v: unknown) => {
     let s = String(v ?? "");

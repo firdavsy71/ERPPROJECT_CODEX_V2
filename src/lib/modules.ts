@@ -130,6 +130,7 @@ export const masterFields: Record<string, Field[]> = {
     },
   ],
   settings: [
+    {name:"primaryWarehouseId",label:"Primary operational warehouse",type:"select"},
     { name: "name", label: "Company name", required: true },
     {
       name: "currency",

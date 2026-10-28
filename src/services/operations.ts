@@ -304,9 +304,15 @@ export async function execute(
     .update(JSON.stringify({ action, input }))
     .digest("hex");
   await db().transaction(async (tx) => {
+    const [company]=await tx.select({primaryWarehouseId:s.settings.primaryWarehouseId}).from(s.settings).limit(1).for("share");
+    if(!company?.primaryWarehouseId) {
+      const existing=await tx.select({id:s.warehouses.id}).from(s.warehouses).limit(2);
+      if(existing.length>1) throw new Error("Configure the primary operational warehouse in company settings before posting operations.");
+    }
     const [warehouse] = await tx
       .select()
       .from(s.warehouses)
+      .where(company?.primaryWarehouseId?eq(s.warehouses.id,company.primaryWarehouseId):undefined)
       .orderBy(s.warehouses.id)
       .limit(1)
       .for("update");
@@ -964,6 +970,9 @@ export async function execute(
           .where(eq(s.saleItems.id, v.saleItemId));
         if (!l || l.variantId !== bom.variantId)
           throw new Error("Sales line does not match this BOM variant");
+        const [linkedOrder]=await tx.select().from(s.sales).where(eq(s.sales.id,l.orderId));
+        if(!linkedOrder || ["Cancelled","Shipped","Completed"].includes(linkedOrder.status))
+          throw new Error("Choose an open sales order before manufacturing its line");
         if (branding) {
           const [order] = await tx
             .select()
@@ -1052,6 +1061,11 @@ export async function execute(
           "Bind an approved technical specification to this legacy order before continuing",
         );
       if (action === "plan") {
+        if(mo.saleItemId) {
+          const [line]=await tx.select().from(s.saleItems).where(eq(s.saleItems.id,mo.saleItemId));
+          const [order]=await tx.select().from(s.sales).where(eq(s.sales.id,line.orderId));
+          if(["Draft","Cancelled"].includes(order.status)) throw new Error("Confirm the sales order before reserving production materials");
+        }
         const v = z
           .object({
             rollAllocations: z

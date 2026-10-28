@@ -21,7 +21,7 @@ import { ArchiveButton } from "./archive-button";
 import { CompanyLogoManager } from "./company-logo-manager";
 import { RevenueChart } from "./revenue-chart";
 import { masterFields, type Field } from "@/lib/modules";
-import { can, type Actor } from "@/lib/permissions";
+import { can, canExportReport, type Actor } from "@/lib/permissions";
 import { formatMoney as baseFormatMoney } from "@/lib/utils";
 import { currentLocale } from "@/i18n/server";
 import { messages } from "@/i18n/messages";
@@ -1267,7 +1267,7 @@ export async function ModuleView({
             <ActionForm
               label="Edit settings"
               master="settings"
-              fields={masterFields.settings}
+              fields={masterFields.settings.map(f=>f.name==="primaryWarehouseId"?{...f,options:d.warehouses.map(w=>({value:w.id,label:w.name}))}:f)}
               defaults={
                 Object.fromEntries(
                   Object.entries(d.settings[0] ?? {}).filter(
@@ -1339,7 +1339,7 @@ export async function ModuleView({
             "purchases",
             "invoices",
             "movements",
-          ].map((m) => (
+          ].filter(m=>canExportReport(actor.role,m)).map((m) => (
             <Link
               className="report-card"
               href={`/api/reports?report=${m}`}
@@ -1385,6 +1385,7 @@ export async function ModuleView({
         hint: "Items below minimum stock",
       },
     ];
+    if(!can(actor.role,"invoices")) return <><h1>{dictionary.nav.dashboard}</h1><div className="kpi-grid">{cards.map(c=><section className="kpi" key={c.label}><span>{c.label}</span><strong>{c.value}</strong><small>{c.hint}</small></section>)}</div></>;
     return (
       <>
         <div className="page-heading">
