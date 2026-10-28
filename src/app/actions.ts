@@ -9,14 +9,14 @@ import {
 import { revalidatePath } from "next/cache";
 import { AuthError } from "next-auth";
 import { z } from "zod";
-export type Result = { ok: boolean; message: string };
+export type Result = { ok: boolean; message: string; code?: "SESSION_EXPIRED" };
 async function run(
   operation: (
     actor: NonNullable<Awaited<ReturnType<typeof currentActor>>>,
   ) => Promise<void>,
 ): Promise<Result> {
   const actor = await currentActor();
-  if (!actor) return { ok: false, message: "Please sign in again." };
+  if (!actor) return { ok: false, code: "SESSION_EXPIRED", message: "Your session is no longer active. Sign in again, then return here and retry." };
   try {
     await operation(actor);
     revalidatePath("/", "layout");

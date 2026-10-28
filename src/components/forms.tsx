@@ -255,9 +255,10 @@ export function ActionForm({
               </div>
             )}
             {result && !result.ok && (
-              <p className="error form-error" role="alert">
-                <AlertCircle size={16} aria-hidden="true" /> {result.message}
-              </p>
+              <div className="error form-error" role="alert">
+                <p><AlertCircle size={16} aria-hidden="true" /> {result.code === "SESSION_EXPIRED" && locale === "ru" ? "Сессия завершена. Войдите снова, затем вернитесь в это окно и повторите действие." : result.code === "SESSION_EXPIRED" && locale === "uz" ? "Sessiya tugadi. Qayta kiring, so‘ng bu oynaga qaytib amalni takrorlang." : result.message}</p>
+                {result.code === "SESSION_EXPIRED" && <a className="btn btn-outline" href="/login" target="_blank" rel="noopener noreferrer">{locale === "ru" ? "Войти в новой вкладке" : locale === "uz" ? "Yangi sahifada kirish" : "Sign in in a new tab"}</a>}
+              </div>
             )}
           </fieldset>
           <div className="dialog-footer">

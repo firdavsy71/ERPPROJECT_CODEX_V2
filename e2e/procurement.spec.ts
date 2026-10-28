@@ -35,7 +35,21 @@ test("records receipt quality and landed costs in purchasing", async ({
     await d.getByLabel("Unit price").fill("50000");
   });
   await page.getByRole("link", { name: /^PO-/ }).click();
-  await action(page, "Place order");
+  await page.getByRole("button", { name: "Place order", exact: true }).click();
+  const placeDialog = page.locator("dialog[open]");
+  await page.context().clearCookies();
+  await placeDialog.getByRole("button", { name: "Save record", exact: true }).click();
+  await expect(placeDialog.getByRole("alert")).toContainText("session is no longer active");
+  const [loginPage] = await Promise.all([
+    page.context().waitForEvent("page"),
+    placeDialog.getByRole("link", {name: "Sign in in a new tab"}).click(),
+  ]);
+  await loginPage.getByLabel("Email address").fill(process.env.ADMIN_EMAIL!);
+  await loginPage.getByLabel("Password", {exact:true}).fill(process.env.ADMIN_PASSWORD!);
+  await loginPage.getByRole("button", {name:"Sign in to workspace"}).click();
+  await expect(loginPage).toHaveURL(/dashboard/);
+  await placeDialog.getByRole("button", { name: "Save record", exact: true }).click();
+  await expect(placeDialog).toHaveCount(0);
   await action(page, "Receive materials", async (d) => {
     await d.getByLabel("Purchase line").selectOption({ index: 1 });
     await d.getByLabel("Received quantity").fill("100");
