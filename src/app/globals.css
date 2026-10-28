@@ -1303,7 +1303,7 @@ tbody tr:hover { background: var(--surface-subtle); }
 .report-grid { grid-template-columns: repeat(3,minmax(0,1fr)); }
 .report-card:hover { border-color: var(--border-strong); }
 .report-icon { background: var(--surface-subtle); }
-dialog { width: min(760px,calc(100vw - 32px)); max-height: min(90dvh,1000px); background: var(--surface-elevated); border-color: var(--border-strong); border-radius: var(--radius-lg); box-shadow: var(--shadow-dialog); }
+dialog { position: fixed; inset: 0; margin: auto; width: min(760px,calc(100vw - 32px)); max-height: min(90dvh,1000px); background: var(--surface-elevated); border-color: var(--border-strong); border-radius: var(--radius-lg); box-shadow: var(--shadow-dialog); }
 dialog[open] { animation: industrial-dialog-in var(--motion-normal) var(--motion-ease); }
 dialog::backdrop { background: #0b0d0f80; backdrop-filter: none; animation: industrial-fade var(--motion-normal) ease; }
 .dialog-header { position: sticky; top: 0; z-index: 2; gap: 20px; background: var(--surface-elevated); padding: 24px; }

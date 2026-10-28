@@ -72,6 +72,15 @@ test("shared forms and tables expose keyboard-friendly controls without changing
   await page.getByRole("button", { name: "Add product", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Add product", exact: true });
   await expect(dialog).toBeVisible();
+  for (const width of [1440, 768, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    const viewportWidth = await page.evaluate(() => document.documentElement.clientWidth);
+    const box = await dialog.boundingBox();
+    expect(box).not.toBeNull();
+    // A modal can reserve a scrollbar gutter on one side of the viewport.
+    expect(Math.abs(box!.x + box!.width / 2 - viewportWidth / 2)).toBeLessThan(10);
+    expect(Math.abs(box!.y + box!.height / 2 - 450)).toBeLessThan(2);
+  }
   await expect(dialog.getByLabel("Product name")).toHaveAttribute("aria-required", "true");
   await dialog.getByLabel("Product name").fill("Unsaved keyboard QA draft");
   page.once("dialog", (confirmation) => confirmation.dismiss());
