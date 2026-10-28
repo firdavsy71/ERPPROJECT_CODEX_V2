@@ -32,6 +32,7 @@ const en = {
     returns: "Returns & exchanges",
     repairs: "Alterations & repairs",
     compliance: "Compliance & certificates",
+    "supplier-performance": "Supplier performance & landed costs",
   },
   common: {
     language: "Language",
@@ -160,6 +161,7 @@ const ru: typeof en = {
     returns: "Возвраты и обмен",
     repairs: "Переделка и ремонт",
     compliance: "Сертификаты и соответствие",
+    "supplier-performance": "Оценка поставщиков и себестоимость",
   },
   common: {
     language: "Язык",
@@ -288,6 +290,7 @@ const uz: typeof en = {
     returns: "Qaytarish va almashtirish",
     repairs: "Moslashtirish va ta’mirlash",
     compliance: "Sertifikatlar va muvofiqlik",
+    "supplier-performance": "Yetkazib beruvchilar va xarid tannarxi",
   },
   common: {
     language: "Til",

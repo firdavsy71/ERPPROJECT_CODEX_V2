@@ -83,6 +83,8 @@ export function Shell({
         <p className="nav-heading">{common("workspace")}</p>
         <nav>
           {nav.map(([path], i) => {
+            if (path === "supplier-performance" && !can(role as Role, "purchases"))
+              return null;
             if (path === "compliance" && !can(role as Role, "compliance.read"))
               return null;
             if (path === "repairs" && !can(role as Role, "repairs.read"))

@@ -18,6 +18,7 @@ import { outsourcingAction } from "@/services/outsourcing";
 import { pricingAction, approveSalePricing } from "@/services/pricing";
 import { repairAction } from "@/services/repairs";
 import { complianceAction } from "@/services/compliance";
+import { procurementAction } from "@/services/procurement";
 import { shippingAction, deliveryCommitted } from "@/services/shipping";
 import {
   returnsAction,
@@ -50,6 +51,7 @@ export function lineTotal(
   return discountedLineTotal(q, p, discount);
 }
 export const actions = [
+  "inspectProcurement", "recordSupplierIncident", "recordProcurementExpense",
   "createSafetyStandard", "editSafetyStandard", "archiveSafetyStandard", "createCertification", "editCertification", "reviseCertification", "approveCertification", "revokeCertification",
   "createRepair", "assignRepair", "repairStatus", "requireRepairMaterial", "consumeRepairMaterial", "recordRepairLabor",
   "confirmLegacyShipmentDelivery",
@@ -125,6 +127,9 @@ export const actions = [
 ] as const;
 export type BusinessAction = (typeof actions)[number];
 const resources: Record<BusinessAction, string> = {
+  inspectProcurement: "purchases",
+  recordSupplierIncident: "purchases",
+  recordProcurementExpense: "procurement.cost",
   createSafetyStandard: "compliance.manage",
   editSafetyStandard: "compliance.manage",
   archiveSafetyStandard: "compliance.manage",
@@ -318,7 +323,26 @@ export async function execute(
     await tx
       .insert(s.operations)
       .values({ key, fingerprint, actorId: actor.id });
-    if (["createSafetyStandard","editSafetyStandard","archiveSafetyStandard","createCertification","editCertification","reviseCertification","approveCertification","revokeCertification"].includes(action)) {
+    if (["inspectProcurement","recordSupplierIncident","recordProcurementExpense"].includes(action)) {
+      await procurementAction(tx,action,input,{
+        actorId:actor.id,
+        reject:async (item, quantity, rollId)=>{
+          const b=await balance(tx,warehouse.id,item.materialId,"material");
+          if(b.rollTracked) {
+            if(!rollId) throw new Error("Select the received fabric roll for rejected material.");
+            const [roll]=await tx.select().from(s.fabricRolls).where(eq(s.fabricRolls.id,rollId));
+            if(!roll || roll.balanceId!==b.id || roll.purchaseReceiptId!==item.receiptId || roll.purchaseOrderItemId!==item.purchaseItemId) throw new Error("The roll must belong to this receipt line.");
+            let movementId="";
+            await adjustRoll(tx,{rollId,delta:num(quantity).neg().toFixed(4),actorId:actor.id,operationKey:key,reason:"Supplier quality rejection",applyMovement:async (balance,delta)=>{
+              const m=await move(tx,balance,delta,0,"Supplier quality rejection","supplier inspection",key+":rejection",actor); movementId=m.id;return m;
+            }});
+            return movementId;
+          }
+          if(rollId) throw new Error("This material is not roll tracked.");
+          const m=await move(tx,b,num(quantity).neg(),0,"Supplier quality rejection","supplier inspection",key+":rejection",actor);return m.id;
+        },
+      });
+    } else if (["createSafetyStandard","editSafetyStandard","archiveSafetyStandard","createCertification","editCertification","reviseCertification","approveCertification","revokeCertification"].includes(action)) {
       await complianceAction(tx,action,input,actor.id);
     } else if (["createRepair", "assignRepair", "repairStatus", "requireRepairMaterial", "consumeRepairMaterial", "recordRepairLabor"].includes(action)) {
       await repairAction(tx, action, input, {
@@ -668,7 +692,7 @@ export async function execute(
         throw new Error("Only draft purchase orders can be ordered");
       await tx
         .update(s.purchases)
-        .set({ status: "Ordered" })
+        .set({ status: "Ordered", orderedAt:new Date() })
         .where(eq(s.purchases.id, v.id));
     } else if (action === "receive") {
       const v = z
@@ -719,6 +743,10 @@ export async function execute(
           `${key}:${l.id}`,
           actor,
         );
+        await tx.insert(s.purchaseReceiptItems).values({
+          receiptId:receipt.id,purchaseItemId:line.id,materialId:line.materialId,movementId:movement.id,
+          quantity:l.quantity,unitPrice:po.orderedAt ? line.price : null,currency:po.currency,expectedDate:po.orderedAt ? po.expectedDate || null : null,orderedAt:po.orderedAt,provenance:po.orderedAt ? "Recorded" : "Legacy order",
+        }).onConflictDoNothing();
         if (b.rollTracked)
           await receiveRolls(tx, {
             balance: b,

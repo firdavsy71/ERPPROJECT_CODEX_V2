@@ -242,6 +242,9 @@ export async function ModuleView({
                 <Link href="/returns">Return authorizations and exchanges</Link>
               </p>
             )}
+            {module === "suppliers" && can(actor.role, "purchases") && (
+              <p><Link href={`/supplier-performance?supplierId=${r.id}`}>Supplier performance, quality and costs</Link></p>
+            )}
             <div className="actions">
               {editable && (
                 <>
@@ -500,6 +503,7 @@ export async function ModuleView({
     rows = d.purchases.map((o) => ({
       ...o,
       createdAt: undefined,
+      orderedAt: undefined,
       supplier: d.suppliers.find((c) => c.id === o.supplierId)?.name,
     }));
     cols = columns(
@@ -528,6 +532,7 @@ export async function ModuleView({
             {r.number} <span className="badge">{r.status}</span>
           </h2>
           <p>{formatMoney(r.total, r.currency)}</p>
+          {can(actor.role,"purchases") && <p><Link href={`/supplier-performance?orderId=${r.id}`}>Receipt quality and landed costs</Link></p>}
           <div className="actions">
             {editable && r.status === "Draft" && (
               <ActionForm

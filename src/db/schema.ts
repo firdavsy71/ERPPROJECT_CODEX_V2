@@ -427,6 +427,7 @@ export const purchases = pgTable("purchase_orders", {
   status: text().notNull().default("Draft"),
   currency: text().notNull().default("UZS"),
   expectedDate: text("expected_date"),
+  orderedAt: timestamp("ordered_at", {withTimezone:true}),
   total: money("total"),
   createdAt: time(),
 });
@@ -459,6 +460,43 @@ export const receipts = pgTable("purchase_receipts", {
   operationKey: text("operation_key").notNull().unique(),
   createdAt: time(),
 });
+export const purchaseReceiptItems = pgTable("purchase_receipt_items", {
+  id:id(),
+  receiptId:uuid("receipt_id").notNull().references(()=>receipts.id),
+  purchaseItemId:uuid("purchase_item_id").notNull().references(()=>purchaseItems.id),
+  materialId:uuid("material_id").notNull().references(()=>materials.id),
+  movementId:uuid("movement_id").notNull().unique().references(()=>movements.id),
+  quantity:qty("quantity"),
+  unitPrice:numeric("unit_price",{precision:18,scale:2}),
+  currency:text().notNull(),
+  expectedDate:text("expected_date"),
+  orderedAt:timestamp("ordered_at",{withTimezone:true}),
+  provenance:text().notNull().default("Recorded"),
+  createdAt:time(),
+},t=>[check("receipt_item_quantity_positive",sql`${t.quantity} > 0`),uniqueIndex("receipt_item_once").on(t.receiptId,t.purchaseItemId)]);
+export const procurementInspections = pgTable("procurement_inspections", {
+  id:id(), receiptItemId:uuid("receipt_item_id").notNull().references(()=>purchaseReceiptItems.id),
+  accepted:qty("accepted"), rejected:qty("rejected"),
+  notes:text().notNull(), rollId:uuid("roll_id").references(()=>fabricRolls.id),
+  movementId:uuid("movement_id").references(()=>movements.id),
+  actorId:uuid("actor_id").notNull().references(()=>users.id), createdAt:time(),
+},t=>[check("procurement_inspection_quantities",sql`${t.accepted} >= 0 and ${t.rejected} >= 0 and ${t.accepted}+${t.rejected} > 0`)]);
+export const supplierIncidents = pgTable("supplier_quality_incidents", {
+  id:id(), supplierId:uuid("supplier_id").notNull().references(()=>suppliers.id),
+  receiptItemId:uuid("receipt_item_id").notNull().references(()=>purchaseReceiptItems.id),
+  inspectionId:uuid("inspection_id").references(()=>procurementInspections.id),
+  description:text().notNull(), actorId:uuid("actor_id").notNull().references(()=>users.id), createdAt:time(),
+});
+export const procurementExpenses = pgTable("procurement_expenses", {
+  id:id(), receiptId:uuid("receipt_id").notNull().references(()=>receipts.id),
+  kind:text().notNull(), reference:text().notNull().unique(), amount:money("amount"), currency:text().notNull(),
+  notes:text().notNull(), actorId:uuid("actor_id").notNull().references(()=>users.id), createdAt:time(),
+},t=>[check("procurement_expense_positive",sql`${t.amount}>0`)]);
+export const procurementAllocations = pgTable("procurement_allocations", {
+  id:id(), expenseId:uuid("expense_id").notNull().references(()=>procurementExpenses.id),
+  receiptItemId:uuid("receipt_item_id").notNull().references(()=>purchaseReceiptItems.id),
+  amount:money("amount"),
+},t=>[check("procurement_allocation_nonnegative",sql`${t.amount}>=0`),uniqueIndex("procurement_expense_line").on(t.expenseId,t.receiptItemId)]);
 export const shipments = pgTable("shipments", {
   id: id(),
   orderId: uuid("order_id")

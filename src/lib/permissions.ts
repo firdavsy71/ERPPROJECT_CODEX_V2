@@ -30,6 +30,7 @@ const permissions: Record<Role, string[]> = {
     "branding.approve",
   ],
   inventory: [
+    "procurement.cost",
     "compliance.read",
     "repairs.read",
     "repairs.work",
