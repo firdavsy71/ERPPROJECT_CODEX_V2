@@ -21,6 +21,17 @@ const money = (name: string) =>
   numeric(name, { precision: 18, scale: 2 }).notNull().default("0");
 const qty = (name: string) =>
   numeric(name, { precision: 18, scale: 4 }).notNull().default("0");
+export const documentSnapshots = pgTable("document_snapshots", {
+  id:id(), kind:text().notNull(), entityId:uuid("entity_id").notNull(),
+  payload:jsonb().$type<Record<string,unknown>>().notNull(),
+  createdBy:uuid("created_by").notNull().references(()=>users.id),createdAt:time(),
+},t=>[uniqueIndex("document_snapshot_kind_entity").on(t.kind,t.entityId)]);
+export const companyLogo = pgTable("company_logo", {
+  id:integer().primaryKey().default(1), name:text().notNull(),mime:text().notNull(),
+  data:text().notNull(),sha256:text().notNull(),
+  updatedBy:uuid("updated_by").notNull().references(()=>users.id),
+  updatedAt:timestamp("updated_at",{withTimezone:true}).defaultNow().notNull(),
+});
 export const safetyStandards = pgTable("safety_standards", {
   id: id(), reference: text().notNull().unique(), title: text().notNull(),
   notes: text(), active: boolean().notNull().default(true),

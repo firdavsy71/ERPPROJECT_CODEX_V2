@@ -18,6 +18,7 @@ import Decimal from "decimal.js";
 import { ActionForm } from "./forms";
 import { DataTable, type Row } from "./data-table";
 import { ArchiveButton } from "./archive-button";
+import { CompanyLogoManager } from "./company-logo-manager";
 import { RevenueChart } from "./revenue-chart";
 import { masterFields, type Field } from "@/lib/modules";
 import { can, type Actor } from "@/lib/permissions";
@@ -411,6 +412,7 @@ export async function ModuleView({
         );
       detail = (
         <>
+          {can(actor.role,"sales") && <p><Link href={`/documents/sales-order/${r.id}`}>Printable sales order / PDF</Link></p>}
           <h2>
             {r.number} <span className="badge">{r.status}</span>
           </h2>
@@ -528,6 +530,7 @@ export async function ModuleView({
       const lines = d.purchaseItems.filter((l) => l.orderId === r.id);
       detail = (
         <>
+          {can(actor.role,"purchases") && <p><Link href={`/documents/purchase-order/${r.id}`}>Printable purchase order / PDF</Link></p>}
           <h2>
             {r.number} <span className="badge">{r.status}</span>
           </h2>
@@ -776,6 +779,7 @@ export async function ModuleView({
       );
       detail = (
         <>
+          {can(actor.role,"manufacturing") && <p><Link href={`/documents/manufacturing-order/${r.id}`}>Manufacturing order / PDF</Link> · <Link href={`/documents/material-requirements/${r.id}`}>Material requirements / PDF</Link></p>}
           <h2>
             {r.number} <span className="badge">{r.status}</span>
           </h2>
@@ -1273,6 +1277,7 @@ export async function ModuleView({
               }
             />
           )}
+          {editable && <CompanyLogoManager />}
         </section>
         {editable && (
           <>

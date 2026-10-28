@@ -19,6 +19,7 @@ import { pricingAction, approveSalePricing } from "@/services/pricing";
 import { repairAction } from "@/services/repairs";
 import { complianceAction } from "@/services/compliance";
 import { procurementAction } from "@/services/procurement";
+import {captureOperationDocuments} from "@/services/documents";
 import { shippingAction, deliveryCommitted } from "@/services/shipping";
 import {
   returnsAction,
@@ -1463,6 +1464,7 @@ export async function execute(
           .set({ status: "Completed" })
           .where(eq(s.sales.id, invoice.orderId));
     }
+    await captureOperationDocuments(tx,action,input,key,actor.id);
     await tx.insert(s.audit).values({
       actorId: actor.id,
       action,

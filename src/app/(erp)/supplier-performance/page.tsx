@@ -348,6 +348,7 @@ export default async function SupplierPerformance({
         })}
       />
       <h2>Receipt and inspection history</h2>
+    <ul>{selectedReceipts.map(r=><li key={r.id}><Link href={`/documents/material-receipt/${r.id}`}>Material receipt {r.id} / PDF</Link></li>)}</ul>
       <DataTable
         columns={[
           "Purchase",

@@ -1,5 +1,6 @@
 import { and, desc, eq } from "drizzle-orm";
 import { db } from "@/db";
+import {captureDocument} from "@/services/documents";
 import * as s from "@/db/schema";
 import { authorize, type Actor } from "@/lib/permissions";
 import {
@@ -165,6 +166,7 @@ export async function transitionSpecification(
           : {}),
       })
       .where(eq(s.specifications.id, id));
+    if(action==="approve") await captureDocument(tx,"technical-specification",id,actor.id);
     await tx.insert(s.audit).values({
       actorId: actor.id,
       action: `specification.${action}`,

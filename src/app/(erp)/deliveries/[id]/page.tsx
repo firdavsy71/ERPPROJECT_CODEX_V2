@@ -62,6 +62,7 @@ export default async function Delivery({
         <DeliveryPrint />
       </div>
       <p>{d.customerName}</p>
+      <p className="no-print"><Link href={`/documents/packing-list/${id}`}>Packing list / PDF</Link>{d.shipmentId && <> · <Link href={`/documents/delivery-note/${id}`}>Delivery note / PDF</Link></>}</p>
       <p style={{ whiteSpace: "pre-wrap" }}>{d.address}</p>
       <p>
         Carrier: {d.carrier} · Vehicle: {d.vehicle || "—"} · Driver:{" "}

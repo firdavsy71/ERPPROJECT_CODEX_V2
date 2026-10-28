@@ -94,6 +94,7 @@ export default async function SpecificationDetail({
           <h1>Technical specification · v{version.version}</h1>
           <span className="badge">{version.status}</span>
         </div>
+        {can(actor.role,"specifications") && <p><Link href={`/documents/technical-specification/${id}`}>Technical specification document / PDF</Link></p>}
         <SpecificationControls
           id={id}
           status={version.status}

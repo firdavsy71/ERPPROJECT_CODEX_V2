@@ -42,6 +42,7 @@ export default async function Quotation({
   return (
     <>
       <h1>{q.number}</h1>
+      <p><Link href={`/documents/quotation/${id}`}>Printable quotation / PDF</Link></p>
       <p>
         {q.status} · valid through {q.validUntil} · product total {q.total}{" "}
         {q.currency}
