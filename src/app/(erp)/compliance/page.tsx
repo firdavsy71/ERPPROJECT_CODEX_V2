@@ -9,6 +9,7 @@ import { certificationFields } from "@/lib/compliance-fields";
 import { ActionForm } from "@/components/forms";
 import { DataTable } from "@/components/data-table";
 import { z } from "zod";
+import { businessDate } from "@/i18n/format";
 export default async function Compliance({
   searchParams,
 }: {
@@ -18,12 +19,14 @@ export default async function Compliance({
   if (!actor) redirect("/login");
   if (!can(actor.role, "compliance.read")) notFound();
   const search = await searchParams;
-  const [versions, standards, products, specs] = await Promise.all([
+  const [versions, standards, products, specs, company] = await Promise.all([
     db().select().from(s.certifications),
     db().select().from(s.safetyStandards),
     db().select().from(s.products),
     db().select().from(s.specifications),
+    db().select({ timezone: s.settings.timezone }).from(s.settings).limit(1),
   ]);
+  const today = businessDate(new Date(), company[0]?.timezone);
   const filterProduct = z.uuid().safeParse(search.productId).success
     ? search.productId
     : undefined;
@@ -51,10 +54,10 @@ export default async function Compliance({
         certification. An expired, revoked, draft or future certificate is not
         shown as certified.
       </p>
-      {rows.filter((v) => expiresSoon(v, versions)).length > 0 && (
+      {rows.filter((v) => expiresSoon(v, versions, today)).length > 0 && (
         <p role="status">
           Expiration alert:{" "}
-          {rows.filter((v) => expiresSoon(v, versions)).length} approved
+          {rows.filter((v) => expiresSoon(v, versions, today)).length} approved
           certificate version(s) expire within 30 days.
         </p>
       )}
@@ -143,9 +146,11 @@ export default async function Compliance({
           Standard:
             standards.find((x) => x.id === v.standardId)?.reference ?? "",
           Version: v.version,
-          Status: complianceStatus(v, versions),
+          Status: complianceStatus(v, versions, today),
           Expiry: v.expiryDate,
-          Alert: expiresSoon(v, versions) ? "Expires within 30 days" : "",
+          Alert: expiresSoon(v, versions, today)
+            ? "Expires within 30 days"
+            : "",
         }))}
       />
       <h2>Safety standard references</h2>

@@ -16,6 +16,7 @@ export default async function OperationOrder({
 }) {
   const actor = await currentActor();
   if (!actor) redirect("/login");
+  if (!can(actor.role, "manufacturing")) notFound();
   const { id } = await params;
   if (!z.uuid().safeParse(id).success) notFound();
   const [order] = await db()

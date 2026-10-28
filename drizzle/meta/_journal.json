@@ -148,6 +148,20 @@
       "when": 1793165270164,
       "tag": "0020_yielding_stepford_cuckoos",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1793169909844,
+      "tag": "0021_repair_identity_guards",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1793189567724,
+      "tag": "0022_ledger_payment_integrity",
+      "breakpoints": true
     }
   ]
 }

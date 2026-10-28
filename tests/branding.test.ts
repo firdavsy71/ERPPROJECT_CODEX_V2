@@ -184,6 +184,26 @@ it("calculates decimal decoration, setup, fabric and tape pricing exactly", () =
     total: "0.42",
   });
 });
+it("uses the same explicit operational warehouse policy as sales and manufacturing", async () => {
+  const [warehouse] = await db()
+    .insert(s.warehouses)
+    .values({ name: "Second warehouse" })
+    .returning();
+  await expect(saveBranding(actor, input())).rejects.toThrow(
+    "primary operational warehouse",
+  );
+  expect(await db().select().from(s.brandingRequests)).toHaveLength(0);
+  await db().insert(s.settings).values({ primaryWarehouseId: warehouse.id });
+  const id = await prepared();
+  await transitionBranding(actor, id, "submit");
+  await transitionBranding(actor, id, "approve", {
+    customerApprover: "Customer purchasing director",
+    approvalReference: "Approved proof multiwarehouse case",
+  });
+  expect((await getBranding(actor, id))?.version.status).toBe("Approved");
+  await act("confirmSale", { id: orderId });
+  expect((await db().select().from(s.sales))[0].status).toBe("Confirmed");
+});
 it("requires current proof and attached logos before approval and confirmation", async () => {
   const id = await saveBranding(actor, input());
   await expect(transitionBranding(actor, id, "submit")).rejects.toThrow(

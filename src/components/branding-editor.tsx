@@ -80,6 +80,8 @@ export function BrandingEditor({
   return (
     <form
       className="detail-card spec-editor"
+      aria-label="Customer branding editor"
+      aria-busy={pending}
       onSubmit={(e) => {
         e.preventDefault();
         start(async () => {
@@ -102,6 +104,20 @@ export function BrandingEditor({
         });
       }}
     >
+      <header className="editor-intro">
+        <p className="eyebrow">CUSTOM BRANDING / DESIGN WORKSPACE</p>
+        <h2>{initial ? "Refine the customer design" : "Make the uniform their own"}</h2>
+        <p className="muted">Tie every decoration to the right order and approved garment specification. The production team uses the approved version.</p>
+        <nav className="editor-nav" aria-label="Branding sections">
+          <a href="#branding-order">01 / Order</a>
+          <a href="#branding-color">02 / Color & tape</a>
+          <a href="#branding-decoration">03 / Decoration</a>
+          <a href="#branding-estimate">04 / Estimate</a>
+        </nav>
+      </header>
+      <fieldset disabled={pending} className="editor-fields">
+      <legend className="sr-only">Branding design contents</legend>
+      <h2 id="branding-order">Order & instructions</h2>
       <div className="form-grid">
         <label className="field">
           <span>Sales order line</span>
@@ -181,7 +197,7 @@ export function BrandingEditor({
         </label>
       </div>
       {line && !specs.some((s) => s.variantId === line.variantId) && (
-        <p className="error">
+        <p className="error" role="alert">
           This variant needs an approved engineering specification.{" "}
           <Link
             className="text-link"
@@ -191,7 +207,7 @@ export function BrandingEditor({
           </Link>
         </p>
       )}
-      <h2>Custom fabric color</h2>
+      <h2 id="branding-color">Custom fabric color</h2>
       <div className="form-grid">
         {(
           [
@@ -233,7 +249,7 @@ export function BrandingEditor({
         }}
         onChange={(v) => update("reflectiveTape", v)}
       />
-      <h2>Logos, decoration and placement</h2>
+      <h2 id="branding-decoration">Logos, decoration and placement</h2>
       <p className="muted">
         Save a draft, upload company logos, then edit placements and save again.
         Upload the design proof last: any draft edit makes an older proof stale.
@@ -365,7 +381,7 @@ export function BrandingEditor({
       >
         Add decoration
       </Button>
-      <section className="spec-row" aria-live="polite">
+      <section className="spec-row" id="branding-estimate" aria-live="polite" aria-atomic="true">
         <h3>Customization estimate · {line?.currency ?? "select order"}</h3>
         {price ? (
           <p>
@@ -381,11 +397,12 @@ export function BrandingEditor({
           discount these separate services. Confirmed order prices are frozen.
         </p>
       </section>
-      <div className="actions">
+      </fieldset>
+      <div className="actions editor-actions">
         <Button disabled={pending}>
           {pending ? "Saving…" : "Save branding draft"}
         </Button>
-        <span role="alert">{message}</span>
+        <span role="status" aria-live="polite">{message}</span>
       </div>
     </form>
   );

@@ -15,17 +15,9 @@ import {
   privateBrandingStorage,
   type BrandingStorage,
 } from "./branding-storage";
+import { lockOperationalWarehouse as lockWarehouse } from "./operational-warehouse";
 type Tx = Parameters<Parameters<ReturnType<typeof db>["transaction"]>[0]>[0];
 const finalStatuses = ["Shipped", "Completed", "Cancelled"];
-async function lockWarehouse(tx: Tx) {
-  const [warehouse] = await tx
-    .select()
-    .from(s.warehouses)
-    .orderBy(s.warehouses.id)
-    .limit(1)
-    .for("update");
-  if (!warehouse) throw new Error("Workspace is not initialized");
-}
 async function lineContext(tx: Tx, saleItemId: string) {
   const [line] = await tx
     .select()

@@ -21,7 +21,7 @@ import { ArchiveButton } from "./archive-button";
 import { CompanyLogoManager } from "./company-logo-manager";
 import { RevenueChart } from "./revenue-chart";
 import { masterFields, type Field } from "@/lib/modules";
-import { can, canExportReport, type Actor } from "@/lib/permissions";
+import { can, canReadModule, canExportReport, type Actor } from "@/lib/permissions";
 import { formatMoney as baseFormatMoney } from "@/lib/utils";
 import { currentLocale } from "@/i18n/server";
 import { messages } from "@/i18n/messages";
@@ -263,14 +263,15 @@ export async function ModuleView({
             </div>
             <dl className="record-grid">
               {Object.entries(r)
-                .filter(([k]) => !["id", "createdAt"].includes(k))
+                .filter(([k]) => !["id", "createdAt", "categoryId"].includes(k))
                 .map(([k, v]) => (
                   <div key={k}>
-                    <dt>{k}</dt>
-                    <dd>{String(v ?? "—")}</dd>
+                    <dt>{k === "active" ? "Status" : k === "imageUrl" ? "Image reference" : (masterFields[module]?.find(f => f.name === k)?.label ?? k.replace(/([A-Z])/g, " $1"))}</dt>
+                    <dd>{typeof v === "boolean" ? (v ? "Active" : "Archived") : String(v ?? "—")}</dd>
                   </div>
                 ))}
             </dl>
+            {module === "materials" && <section><div className="section-heading"><div><p className="eyebrow">STORAGE / AVAILABILITY</p><h3>Stock by warehouse</h3></div></div><DataTable rows={d.balances.filter(balance => balance.materialId === r.id).map(balance=>({id:balance.id,warehouse:d.warehouses.find(w=>w.id===balance.warehouseId)?.name,onHand:balance.onHand,reserved:balance.reserved,available:new Decimal(balance.onHand).minus(balance.reserved).toFixed(4)}))} columns={columns("warehouse|Warehouse","onHand|On hand","reserved|Reserved","available|Available")} /><h3>Material movements</h3><p className="muted">Latest journal entries in the current workspace view.</p><DataTable rows={d.movements.filter(movement=>d.balances.some(balance=>balance.id===movement.balanceId && balance.materialId===r.id)).map(movement=>({...movement,createdAt:movement.createdAt.toISOString()}))} columns={columns("createdAt|Date","reason|Operation","source|Source","quantity|Stock change","reservedDelta|Reserved change")} /></section>}
             {module === "products" && (
               <>
                 {can(actor.role, "compliance.read") && (
@@ -420,6 +421,8 @@ export async function ModuleView({
             {d.customers.find((c) => c.id === r.customerId)?.name} ·{" "}
             {formatMoney(r.total, r.currency)}
           </p>
+          <dl className="workspace-meta"><div><dt>Ordered units</dt><dd>{lines.reduce((sum,line)=>sum+line.quantity,0)}</dd></div><div><dt>Reserved units</dt><dd>{lines.reduce((sum,line)=>sum+line.reserved,0)}</dd></div><div><dt>Shipped units</dt><dd>{lines.reduce((sum,line)=>sum+line.shipped,0)}</dd></div><div><dt>Expected delivery</dt><dd>{r.deliveryDate ? formatDateOnly(r.deliveryDate,locale) : "Not specified"}</dd></div></dl>
+          <progress className="order-progress" aria-label="Shipped units against ordered quantity" value={lines.reduce((sum,line)=>sum+line.shipped,0)} max={lines.reduce((sum,line)=>sum+line.quantity,0) || 1} />
           <div className="actions">
             {editable && r.status === "Draft" && (
               <ActionForm
@@ -786,6 +789,19 @@ export async function ModuleView({
           <p>
             {variantLabel(r.variantId)} · {r.quantity} planned units
           </p>
+          <ol className="workflow-stages" aria-label="Production workflow">
+            {["Draft", "Planned", "In Progress", "Quality Control", "Completed"].map((stage, index, stages) => {
+              const current = stages.indexOf(r.status);
+              return <li key={stage} data-state={index < current ? "complete" : index === current ? "current" : "upcoming"} aria-current={stage === r.status ? "step" : undefined}><span>{String(index + 1).padStart(2, "0")}</span>{stage}</li>;
+            })}
+          </ol>
+          <dl className="workspace-meta">
+            <div><dt>Planned quantity</dt><dd>{r.quantity}</dd></div>
+            <div><dt>Accepted output</dt><dd>{r.completed}</dd></div>
+            <div><dt>Remaining to accepted plan</dt><dd>{Math.max(0, r.quantity - r.completed)}</dd></div>
+            <div><dt>Warehouse</dt><dd>{d.warehouses.find(w => w.id === r.warehouseId)?.name ?? "Assigned at planning"}</dd></div>
+          </dl>
+          <progress className="order-progress" aria-label="Accepted output against planned quantity" value={r.completed} max={r.quantity || 1} />
           <p>
             <Link href="/cutting">
               Cutting batches, layouts and fabric actuals
@@ -964,7 +980,8 @@ export async function ModuleView({
             rows={d.bomItems
               .filter((i) => i.bomId === r.bomId)
               .map((i) => {
-                const b = d.balances.find((b) => b.materialId === i.materialId);
+                const b = d.balances.find((b) => b.materialId === i.materialId && b.warehouseId === (r.warehouseId ?? d.settings[0]?.primaryWarehouseId));
+                const allocation = d.reservations.find(reservation => reservation.orderId === r.id && reservation.balanceId === b?.id);
                 const needed = new Decimal(i.quantity).mul(r.quantity);
                 const available = new Decimal(b?.onHand ?? 0).minus(
                   b?.reserved ?? 0,
@@ -974,6 +991,8 @@ export async function ModuleView({
                   material: d.materials.find((m) => m.id === i.materialId)
                     ?.name,
                   required: needed.toFixed(4),
+                  reserved: allocation?.quantity ?? "0.0000",
+                  consumed: allocation?.consumed ?? "0.0000",
                   available: available.toFixed(4),
                   shortage: Decimal.max(0, needed.minus(available)).toFixed(4),
                 };
@@ -981,6 +1000,8 @@ export async function ModuleView({
             columns={columns(
               "material|Material",
               "required|Required",
+              "reserved|Order allocation",
+              "consumed|Consumed",
               "available|Unreserved",
               "shortage|Unreserved shortage",
             )}
@@ -1026,6 +1047,20 @@ export async function ModuleView({
       );
     extra = (
       <>
+        <section className="panel inventory-matrix">
+          <div className="section-heading"><div><p className="eyebrow">FINISHED GOODS / AVAILABLE TO RESERVE</p><h2>Size & color availability</h2><p className="muted">Available = on hand − reserved. Warehouses are displayed separately.</p></div></div>
+          {d.warehouses.map(warehouse => d.products.filter(product => d.variants.some(variant => variant.productId === product.id && d.balances.some(balance => balance.variantId === variant.id && balance.warehouseId === warehouse.id))).map(product => {
+            const variants = d.variants.filter(variant => variant.productId === product.id);
+            const sizes = [...new Set(variants.map(variant => variant.size))];
+            const colors = [...new Set(variants.map(variant => variant.color))];
+            return <div key={`${warehouse.id}-${product.id}`}><h3>{product.name} <span className="muted">/ {warehouse.name}</span></h3><div className="table-scroll"><table><caption className="sr-only">{product.name} available units in {warehouse.name}</caption><thead><tr><th scope="col">Size</th>{colors.map(color => <th scope="col" key={color}>{color}</th>)}</tr></thead><tbody>{sizes.map(size => <tr key={size}><th scope="row">{size}</th>{colors.map(color => {
+              const variant = variants.find(variant => variant.size === size && variant.color === color);
+              const balance = d.balances.find(balance => balance.variantId === variant?.id && balance.warehouseId === warehouse.id);
+              return <td key={color} className="numeric">{variant ? new Decimal(balance?.onHand ?? 0).minus(balance?.reserved ?? 0).toFixed(0) : "—"}</td>;
+            })}</tr>)}</tbody></table></div></div>;
+          }))}
+          {!d.balances.some(balance => balance.variantId) && <p className="muted">Accepted finished goods will appear here after quality control.</p>}
+        </section>
         <div className="section-heading">
           <h2>Movement ledger</h2>
           <span className="muted">Latest 100 entries</span>
@@ -1385,30 +1420,21 @@ export async function ModuleView({
         hint: "Items below minimum stock",
       },
     ];
-    if(!can(actor.role,"invoices")) return <><h1>{dictionary.nav.dashboard}</h1><div className="kpi-grid">{cards.map(c=><section className="kpi" key={c.label}><span>{c.label}</span><strong>{c.value}</strong><small>{c.hint}</small></section>)}</div></>;
+    const dashboardDate = formatDateOnly(businessDate(new Date(), d.settings[0]?.timezone ?? "Asia/Tashkent"), locale);
+    const dashboardHero = <header className="dashboard-hero page-heading"><div><p className="eyebrow">WORKWEAR / OPERATING OVERVIEW</p><h1>{dictionary.nav.dashboard}<span className="title-dot">.</span></h1><p className="muted">{descriptions.dashboard}</p></div><div><time className="dashboard-date">{dashboardDate}</time><div className="actions">{canReadModule(actor.role,"sales") && <Link className="btn btn-primary" href="/sales">View sales orders <ArrowUpRight size={16} /></Link>}{canReadModule(actor.role,"manufacturing") && <Link className="btn btn-outline" href="/manufacturing">Production queue <ArrowUpRight size={16} /></Link>}</div></div></header>;
+    if(!can(actor.role,"invoices")) return <>{dashboardHero}<div className="kpi-grid dashboard-metrics">{cards.map(c=><section className="kpi" key={c.label}><span>{c.label}</span><strong>{c.value}</strong><small>{c.hint}</small></section>)}</div>{canReadModule(actor.role,"manufacturing") && <section className="panel dashboard-queue"><div className="section-heading"><div><p className="eyebrow">PRODUCTION / OPEN WORK</p><h2>On the floor</h2></div><Link href="/manufacturing" className="text-link">All production orders ↗</Link></div><DataTable rows={d.manufacturing.filter(m => !["Completed","Cancelled"].includes(m.status)).slice(-6).reverse().map(m=>({id:m.id,number:m.number,product:variantLabel(m.variantId),quantity:m.quantity,completed:m.completed,status:m.status}))} columns={columns("number|Order","product|Product","quantity|Planned","completed|Accepted","status|Status")} href="manufacturing" /></section>}</>;
     return (
       <>
-        <div className="page-heading">
-          <div>
-            <p className="eyebrow">YOUR OPERATIONS, AT A GLANCE</p>
-            <h1>
-              Business overview<span className="title-dot">.</span>
-            </h1>
-            <p className="muted">{descriptions.dashboard}</p>
-          </div>
-          <Link className="btn btn-primary" href="/sales">
-            View sales orders <ArrowUpRight size={16} />
-          </Link>
-        </div>
+        {dashboardHero}
         <div className="welcome-strip">
           <span className="live-dot" />
-          <strong>Everything in sync.</strong>
+          <strong>One connected workflow.</strong>
           <span>
             Inventory, production and sales — connected in one workspace.
           </span>
-          <span className="strip-tag">OPERATIONS LIVE</span>
+          <span className="strip-tag">SALES → PRODUCTION → DELIVERY</span>
         </div>
-        <div className="kpi-grid">
+        <div className="kpi-grid dashboard-metrics">
           {cards.map((c) => (
             <section className="kpi" key={c.label}>
               <div>
@@ -1498,22 +1524,22 @@ export async function ModuleView({
           href="sales"
         />
         <div className="dashboard-bottom">
-          <Link href="/manufacturing">
+          {canReadModule(actor.role,"manufacturing") && <Link href="/manufacturing">
             <Factory size={22} />
             <div>
               <strong>On the production floor</strong>
               <p>Track work orders from planning to quality approval.</p>
             </div>
             <ArrowUpRight size={18} />
-          </Link>
-          <Link href="/inventory">
+          </Link>}
+          {canReadModule(actor.role,"inventory") && <Link href="/inventory">
             <BoxesIcon />
             <div>
               <strong>Every unit accounted for</strong>
               <p>Explore stock, reservations and movement history.</p>
             </div>
             <ArrowUpRight size={18} />
-          </Link>
+          </Link>}
         </div>
       </>
     );
@@ -1534,6 +1560,7 @@ export async function ModuleView({
         </div>
         <div className="actions">{create}</div>
       </div>
+      {!recordId && rows.length > 0 && <dl className="workspace-meta workspace-summary"><div><dt>Records in this workspace</dt><dd>{rows.length}</dd></div>{["sales","manufacturing","purchases","invoices"].includes(module) && <div><dt>Requiring completion</dt><dd>{rows.filter(row=>row.status && !["Completed","Paid","Received","Cancelled","Archived","Shipped"].includes(String(row.status))).length}</dd></div>}<div><dt>Workspace</dt><dd>{title}</dd></div></dl>}
       {recordId ? (
         <>
           <Link

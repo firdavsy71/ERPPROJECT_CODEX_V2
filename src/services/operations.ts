@@ -3,6 +3,7 @@ import { and, eq, sql } from "drizzle-orm";
 import Decimal from "decimal.js";
 import { z } from "zod";
 import { db } from "@/db";
+import { lockOperationalWarehouse } from "@/services/operational-warehouse";
 import { resolveApprovedSpecification } from "@/services/specifications";
 import * as s from "@/db/schema";
 import { type Actor, authorize } from "@/lib/permissions";
@@ -217,6 +218,16 @@ const resources: Record<BusinessAction, string> = {
   pay: "invoices",
 };
 const idInput = z.object({ id: z.uuid() });
+async function requireActiveVariant(tx: Tx, id: string) {
+  const [variant] = await tx.select().from(s.variants).where(eq(s.variants.id, id)).for("share");
+  if (!variant) throw new Error("Product variant not found");
+  const [product] = await tx.select().from(s.products).where(eq(s.products.id, variant.productId)).for("share");
+  if (!product?.active) throw new Error("Choose an active product for new business documents");
+}
+async function requireActiveMaterial(tx: Tx, id: string) {
+  const [material] = await tx.select().from(s.materials).where(eq(s.materials.id, id)).for("share");
+  if (!material?.active) throw new Error("Choose an active material for new business documents");
+}
 async function balance(
   tx: Tx,
   warehouseId: string,
@@ -304,20 +315,7 @@ export async function execute(
     .update(JSON.stringify({ action, input }))
     .digest("hex");
   await db().transaction(async (tx) => {
-    const [company]=await tx.select({primaryWarehouseId:s.settings.primaryWarehouseId}).from(s.settings).limit(1).for("share");
-    if(!company?.primaryWarehouseId) {
-      const existing=await tx.select({id:s.warehouses.id}).from(s.warehouses).limit(2);
-      if(existing.length>1) throw new Error("Configure the primary operational warehouse in company settings before posting operations.");
-    }
-    const [warehouse] = await tx
-      .select()
-      .from(s.warehouses)
-      .where(company?.primaryWarehouseId?eq(s.warehouses.id,company.primaryWarehouseId):undefined)
-      .orderBy(s.warehouses.id)
-      .limit(1)
-      .for("update");
-    if (!warehouse)
-      throw new Error("Run the seed script to create the primary warehouse.");
+    const warehouse = await lockOperationalWarehouse(tx);
     const [prior] = await tx
       .select()
       .from(s.operations)
@@ -591,6 +589,8 @@ export async function execute(
           items: z.array(z.object({ materialId: z.uuid(), quantity })).min(1),
         })
         .parse(input);
+      await requireActiveVariant(tx, v.variantId);
+      for (const item of v.items) await requireActiveMaterial(tx, item.materialId);
       await tx
         .select()
         .from(s.variants)
@@ -617,6 +617,15 @@ export async function execute(
         .values(v.items.map((i) => ({ ...i, bomId: bom.id })));
     } else if (action === "purchase" || action === "sale") {
       const v = orderSchema.parse(input);
+      if (action === "purchase") {
+        const [supplier] = await tx.select().from(s.suppliers).where(eq(s.suppliers.id, v.partyId)).for("share");
+        if (!supplier?.active) throw new Error("Choose an active supplier for new purchase orders");
+        for (const line of v.lines) await requireActiveMaterial(tx, line.itemId);
+      } else {
+        const [customer] = await tx.select().from(s.customers).where(eq(s.customers.id, v.partyId)).for("share");
+        if (!customer?.active) throw new Error("Choose an active customer for new sales orders");
+        for (const line of v.lines) await requireActiveVariant(tx, line.itemId);
+      }
       if (
         action === "sale" &&
         v.lines.some(
@@ -1064,7 +1073,7 @@ export async function execute(
         if(mo.saleItemId) {
           const [line]=await tx.select().from(s.saleItems).where(eq(s.saleItems.id,mo.saleItemId));
           const [order]=await tx.select().from(s.sales).where(eq(s.sales.id,line.orderId));
-          if(["Draft","Cancelled"].includes(order.status)) throw new Error("Confirm the sales order before reserving production materials");
+          if(["Draft","Cancelled","Shipped","Completed"].includes(order.status)) throw new Error("Confirm an open sales order before reserving production materials");
         }
         const v = z
           .object({
@@ -1444,7 +1453,7 @@ export async function execute(
         .object({
           id: z.uuid(),
           amount: amount.refine((v) => num(v).gt(0)),
-          reference: z.string().min(1).max(200),
+          reference: z.string().trim().min(1).max(200),
         })
         .parse(input);
       const [invoice] = await tx
@@ -1453,6 +1462,11 @@ export async function execute(
         .where(eq(s.invoices.id, v.id))
         .for("update");
       if (!invoice) throw new Error("Invoice not found");
+      const [duplicate] = await tx.select({ id: s.payments.id }).from(s.payments).where(and(
+        eq(s.payments.invoiceId, invoice.id),
+        sql`lower(btrim(${s.payments.reference})) = lower(btrim(${v.reference}))`,
+      )).limit(1);
+      if (duplicate) throw new Error("Payment reference already recorded for this invoice");
       const paid = num(invoice.paid).add(v.amount);
       const returnPosition = await invoiceReturnPosition(tx, invoice.id);
       if (num(v.amount).gt(returnPosition.due))

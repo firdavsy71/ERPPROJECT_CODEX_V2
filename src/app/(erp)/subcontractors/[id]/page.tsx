@@ -16,6 +16,8 @@ export default async function Profile({
 }) {
   const actor = await currentActor();
   if (!actor) redirect("/login");
+  if (!can(actor.role, "manufacturing") && !can(actor.role, "suppliers"))
+    notFound();
   const { id } = await params;
   if (!z.uuid().safeParse(id).success) notFound();
   const [p] = await db()

@@ -1,5 +1,13 @@
-import { describe, it, expect } from "vitest";
-import { resolvePrice, ruleInput } from "@/services/pricing";
+import { describe, it, expect, beforeAll, beforeEach, afterAll } from "vitest";
+import { randomUUID } from "node:crypto";
+import { migrate } from "drizzle-orm/pglite/migrator";
+import { drizzle } from "drizzle-orm/pglite";
+import { sql } from "drizzle-orm";
+import { db, localClient } from "@/db";
+import * as s from "@/db/schema";
+import { execute, type BusinessAction } from "@/services/operations";
+import type { Actor } from "@/lib/permissions";
+import { resolvePrice, ruleInput, pricingDay } from "@/services/pricing";
 import type { pricingRules } from "@/db/schema";
 import { discountedLineTotal } from "@/lib/money";
 const customer = "11111111-1111-4111-8111-111111111111",
@@ -101,5 +109,162 @@ describe("deterministic B2B pricing", () => {
   });
   it("rounds the discounted line once rather than multiplying a rounded unit result", () => {
     expect(discountedLineTotal(3, "0.05", "33.33")).toBe("0.10");
+  });
+  it("expires discounted prices when their standard-price evidence expires", () => {
+    const contract = rule("Contract", [
+      { minQty: 1, mode: "Discount", value: "10" },
+    ]);
+    const standard = rule(
+      "Standard",
+      [{ minQty: 1, mode: "Price", value: "200" }],
+      {
+        endDate: "2026-10-28",
+        version: 3,
+      },
+    );
+    const resolved = price([contract, standard], 1);
+    expect(resolved.snapshot.validUntil).toBe("2026-10-28");
+    expect(resolved.snapshot.baseRuleId).toBe(standard.id);
+    expect(resolved.snapshot.baseRuleVersion).toBe(3);
+    expect(resolved.price).toBe("200.00");
+    expect(resolved.discount).toBe("10.00");
+    const fixedContract = {
+      ...contract,
+      tiers: [{ minQty: 1, mode: "Price" as const, value: "150" }],
+    };
+    expect(price([fixedContract, standard], 1).snapshot.validUntil).toBe(
+      contract.endDate,
+    );
+    expect(price([fixedContract, standard], 1).snapshot.baseRuleId).toBeNull();
+  });
+});
+
+describe("quotation price dependencies persisted in PostgreSQL", () => {
+  let actor: Actor, customerId: string, variantId: string;
+  const act = (action: BusinessAction, input: unknown) =>
+    execute(actor, action, input, randomUUID());
+  beforeAll(async () => {
+    delete process.env.DATABASE_URL;
+    process.env.PGLITE_DATA_DIR = ":memory:";
+    await migrate(drizzle(localClient()!), { migrationsFolder: "drizzle" });
+  });
+  afterAll(async () => {
+    await localClient()?.close();
+  });
+  beforeEach(async () => {
+    await db().execute(
+      sql`truncate users,warehouses,products,customers cascade`,
+    );
+    const [user] = await db()
+      .insert(s.users)
+      .values({
+        name: "Pricing administrator",
+        email: "pricing@example.com",
+        passwordHash: "test",
+        role: "admin",
+      })
+      .returning();
+    actor = { id: user.id, role: "admin" };
+    await db().insert(s.warehouses).values({ name: "Main" });
+    const [customer] = await db()
+      .insert(s.customers)
+      .values({ name: "Contract customer" })
+      .returning();
+    customerId = customer.id;
+    const [product] = await db()
+      .insert(s.products)
+      .values({ name: "Work jacket", sku: "JKT" })
+      .returning();
+    const [variant] = await db()
+      .insert(s.variants)
+      .values({
+        productId: product.id,
+        sku: "JKT-L",
+        size: "L",
+        color: "Navy",
+        price: "100",
+      })
+      .returning();
+    variantId = variant.id;
+  });
+  async function approveRule(
+    kind: "Standard" | "Contract",
+    endDate: string,
+    startDate = "2020-01-01",
+  ) {
+    await act("savePricingRule", {
+      name: `${kind} ${randomUUID()}`,
+      kind,
+      variantId,
+      customerId: kind === "Contract" ? customerId : "",
+      currency: "USD",
+      startDate,
+      endDate,
+      minimum: 1,
+      tiers: [
+        {
+          minQty: 1,
+          mode: kind === "Contract" ? "Discount" : "Price",
+          value: kind === "Contract" ? "10" : "200",
+        },
+      ],
+    });
+    const rule = (await db().select().from(s.pricingRules)).find(
+      (r) => r.status === "Draft",
+    )!;
+    await act("approvePricingRule", { id: rule.id });
+    return rule;
+  }
+  it("rejects quotation validity beyond the discount base's expiration", async () => {
+    await approveRule("Standard", pricingDay());
+    await approveRule("Contract", "2099-12-31");
+    await expect(
+      act("createQuotation", {
+        customerId,
+        currency: "USD",
+        validUntil: "2099-12-31",
+        lines: [{ itemId: variantId, quantity: 2 }],
+      }),
+    ).rejects.toThrow("expiration");
+    expect(await db().select().from(s.quotations)).toHaveLength(0);
+  });
+  it("requires recalculation when the standard base version changes at the same price", async () => {
+    const original = await approveRule("Standard", "2099-12-31");
+    await approveRule("Contract", "2099-12-31");
+    await act("createQuotation", {
+      customerId,
+      currency: "USD",
+      validUntil: pricingDay(),
+      lines: [{ itemId: variantId, quantity: 2 }],
+    });
+    const [quote] = await db().select().from(s.quotations);
+    expect(quote.total).toBe("360.00");
+    expect(quote.lines[0].snapshot.baseRuleId).toBe(original.id);
+    await act("retirePricingRule", {
+      id: original.id,
+      effectiveDate: pricingDay(),
+      reason: "Replace standard-price evidence",
+    });
+    const replacement = await approveRule(
+      "Standard",
+      "2099-12-31",
+      pricingDay(),
+    );
+    await expect(act("approveQuotation", { id: quote.id })).rejects.toThrow(
+      "recalculate",
+    );
+    expect((await db().select().from(s.quotations))[0].status).toBe("Draft");
+    await act("editQuotation", {
+      id: quote.id,
+      customerId,
+      currency: "USD",
+      validUntil: pricingDay(),
+      lines: [{ itemId: variantId, quantity: 2 }],
+    });
+    await act("approveQuotation", { id: quote.id });
+    const [approved] = await db().select().from(s.quotations);
+    expect(approved.status).toBe("Approved");
+    expect(approved.lines[0].snapshot.baseRuleId).toBe(replacement.id);
+    expect(approved.lines[0].snapshot.baseRuleVersion).toBe(2);
   });
 });

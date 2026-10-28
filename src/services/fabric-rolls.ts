@@ -46,6 +46,8 @@ type RollCreation = {
 
 async function createRolls(tx: Tx, c: RollCreation, opening: boolean) {
   for (const input of c.rolls) {
+    if (c.supplierId && input.supplierId && input.supplierId !== c.supplierId)
+      throw new Error("Roll supplier must match the purchase order supplier.");
     const [roll] = await tx.insert(s.fabricRolls).values({
       balanceId: c.balance.id, rollNumber: input.rollNumber,
       supplierId: input.supplierId || c.supplierId || null,

@@ -139,6 +139,11 @@ export function resolvePrice(
     }
     if (tier) discount = tier.value;
   }
+  const baseRule = tier?.mode === "Discount" ? standard : undefined;
+  const validUntil =
+    [selected?.endDate, baseRule?.endDate]
+      .filter((date): date is string => Boolean(date))
+      .sort()[0] ?? null;
   return {
     price: new Decimal(price).toFixed(2),
     discount: new Decimal(discount).toFixed(2),
@@ -146,12 +151,13 @@ export function resolvePrice(
       source: selected?.kind ?? "Catalog",
       ruleId: selected?.id ?? null,
       version: selected?.version ?? null,
-      baseRuleId: tier?.mode === "Discount" ? (standard?.id ?? null) : null,
+      baseRuleId: baseRule?.id ?? null,
+      baseRuleVersion: baseRule?.version ?? null,
       currency: currencyCode,
       asOf,
       quantity,
       minimum: selected?.minimum ?? 1,
-      validUntil: selected?.endDate ?? null,
+      validUntil,
     },
   };
 }
@@ -413,6 +419,9 @@ export async function pricingAction(
             l.price !== q.lines[i].price ||
             l.discount !== q.lines[i].discount ||
             l.snapshot.ruleId !== q.lines[i].snapshot.ruleId ||
+            l.snapshot.baseRuleId !== q.lines[i].snapshot.baseRuleId ||
+            (l.snapshot.baseRuleVersion ?? null) !==
+              (q.lines[i].snapshot.baseRuleVersion ?? null) ||
             Boolean(
               l.snapshot.validUntil &&
               String(l.snapshot.validUntil) < q.validUntil,

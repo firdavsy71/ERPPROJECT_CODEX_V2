@@ -1,0 +1,78 @@
+import { beforeAll, beforeEach, afterAll, expect, it } from "vitest";
+import { randomUUID } from "node:crypto";
+import { drizzle } from "drizzle-orm/pglite";
+import { migrate } from "drizzle-orm/pglite/migrator";
+import { eq, sql } from "drizzle-orm";
+import { db, localClient } from "../src/db";
+import * as s from "../src/db/schema";
+import { execute, type BusinessAction } from "../src/services/operations";
+import type { Actor } from "../src/lib/permissions";
+import { approvedSpec } from "./spec-fixture";
+process.env.PGLITE_DATA_DIR = ":memory:";
+delete process.env.DATABASE_URL;
+let actor: Actor, customer: string, supplier: string, product: string, variant: string, material: string;
+const act = (action: BusinessAction, input: unknown, key = randomUUID()) => execute(actor, action, input, key);
+beforeAll(async () => { await migrate(drizzle(localClient()!), { migrationsFolder: "drizzle" }); });
+afterAll(async () => { await localClient()?.close(); });
+beforeEach(async () => {
+  await db().execute(sql`truncate users,warehouses,products,materials,customers,suppliers cascade`);
+  const [u] = await db().insert(s.users).values({ name: "Admin", email: "admin@test.local", role: "admin", passwordHash: "test" }).returning();
+  actor = { id: u.id, role: "admin" };
+  await db().insert(s.warehouses).values({ name: "Main" });
+  [customer] = (await db().insert(s.customers).values({ name: "Customer" }).returning()).map(x => x.id);
+  [supplier] = (await db().insert(s.suppliers).values({ name: "Supplier" }).returning()).map(x => x.id);
+  [product] = (await db().insert(s.products).values({ name: "Jacket", sku: "JKT" }).returning()).map(x => x.id);
+  [variant] = (await db().insert(s.variants).values({ productId: product, sku: "JKT-L", size: "L", color: "Navy", price: "100" }).returning()).map(x => x.id);
+  [material] = (await db().insert(s.materials).values({ name: "Fabric", sku: "FAB", unit: "Meters" }).returning()).map(x => x.id);
+});
+const order = (partyId: string, itemId: string) => ({ partyId, currency: "UZS", lines: [{ itemId, quantity: "10", price: "100" }] });
+it("prevents duplicate external payment references across fresh operation keys while permitting idempotent retries", async () => {
+  await act("sale", order(customer, variant));
+  const [sale] = await db().select().from(s.sales);
+  const [invoice] = await db().insert(s.invoices).values({ number: "INV-TEST", orderId: sale.id, dueDate: "2099-01-01", subtotal: "1000", total: "1000", taxRate: "0" }).returning();
+  const key = randomUUID(), payment = { id: invoice.id, amount: "200", reference: " BANK-1 " };
+  await act("pay", payment, key);
+  await act("pay", payment, key);
+  const failed = randomUUID();
+  await expect(act("pay", { ...payment, reference: "bank-1" }, failed)).rejects.toThrow("reference already recorded");
+  expect(await db().select().from(s.operations).where(eq(s.operations.key, failed))).toHaveLength(0);
+  await act("pay", { ...payment, reference: "BANK-2" });
+  expect(await db().select().from(s.payments)).toHaveLength(2);
+  expect((await db().select().from(s.invoices))[0].paid).toBe("400.00");
+});
+it("rejects archived counterparties and items for new orders and BOMs without blocking historical receipts", async () => {
+  await act("purchase", order(supplier, material));
+  const [po] = await db().select().from(s.purchases);
+  const [line] = await db().select().from(s.purchaseItems);
+  await act("orderPurchase", { id: po.id });
+  await db().update(s.suppliers).set({ active: false }).where(eq(s.suppliers.id, supplier));
+  await expect(act("purchase", order(supplier, material))).rejects.toThrow("active supplier");
+  await db().update(s.customers).set({ active: false }).where(eq(s.customers.id, customer));
+  await expect(act("sale", order(customer, variant))).rejects.toThrow("active customer");
+  await db().update(s.suppliers).set({ active: true }).where(eq(s.suppliers.id, supplier));
+  await db().update(s.customers).set({ active: true }).where(eq(s.customers.id, customer));
+  await db().update(s.materials).set({ active: false }).where(eq(s.materials.id, material));
+  await expect(act("purchase", order(supplier, material))).rejects.toThrow("active material");
+  await expect(act("bom", { variantId: variant, laborCost: "0", items: [{ materialId: material, quantity: "2" }] })).rejects.toThrow("active material");
+  await db().update(s.products).set({ active: false }).where(eq(s.products.id, product));
+  await expect(act("sale", order(customer, variant))).rejects.toThrow("active product");
+  await expect(act("bom", { variantId: variant, laborCost: "0", items: [{ materialId: material, quantity: "2" }] })).rejects.toThrow("active product");
+  await act("receive", { id: po.id, lines: [{ id: line.id, quantity: "10" }] });
+  expect((await db().select().from(s.balances))[0].onHand).toBe("10.0000");
+  expect(await db().select().from(s.boms)).toHaveLength(0);
+});
+it("blocks stale draft production from reserving materials after its linked sale is fulfilled", async () => {
+  await approvedSpec(actor, product, variant);
+  await act("bom", { variantId: variant, laborCost: "0", items: [{ materialId: material, quantity: "2" }] });
+  const [bom] = await db().select().from(s.boms);
+  await act("sale", order(customer, variant));
+  const [sale] = await db().select().from(s.sales);
+  const [line] = await db().select().from(s.saleItems);
+  await act("manufacture", { bomId: bom.id, saleItemId: line.id, quantity: 10 });
+  const [mo] = await db().select().from(s.manufacturing);
+  for (const status of ["Shipped", "Completed"]) {
+    await db().update(s.sales).set({ status }).where(eq(s.sales.id, sale.id));
+    await expect(act("plan", { id: mo.id })).rejects.toThrow("open sales order");
+  }
+  expect(await db().select().from(s.reservations)).toHaveLength(0);
+});

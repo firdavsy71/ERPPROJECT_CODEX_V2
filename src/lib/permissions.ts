@@ -60,6 +60,16 @@ export function authorize(actor: Actor, resource: string) {
 }
 export function canReadModule(role: Role, module: string) {
   if (module === "dashboard") return true;
+  if (module === "specifications") return canReadModule(role, "products");
+  if (module === "fabric-rolls") return canReadModule(role, "inventory");
+  if (module === "cutting" || module === "production-operations") return can(role, "manufacturing");
+  if (module === "outsourcing") return can(role, "manufacturing") || can(role, "inventory");
+  if (module === "subcontractors") return can(role, "manufacturing") || can(role, "suppliers");
+  const specialized: Record<string, string> = {
+    branding: "branding.read", deliveries: "shipping.read", returns: "returns.read",
+    repairs: "repairs.read", compliance: "compliance.read", "supplier-performance": "purchases",
+  };
+  if (specialized[module]) return can(role, specialized[module]);
   if (module === "reports")
     return [
       "sales",

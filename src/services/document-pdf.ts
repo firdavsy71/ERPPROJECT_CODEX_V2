@@ -3,6 +3,7 @@ import path from "node:path";
 import type { DocumentData } from "./documents";
 import type { Locale } from "@/i18n/messages";
 import { messages } from "@/i18n/messages";
+import { documentLabel, documentTitle } from "@/i18n/documents";
 import {
   formatDateOnly,
   formatTimestamp,
@@ -19,7 +20,7 @@ export async function renderDocumentPdf(
     size: "A4",
     margin: 44,
     font,
-    info: { Title: `${d.title} ${d.number}` },
+    info: { Title: `${documentTitle(d.kind, locale)} ${d.number}` },
     bufferPages: false,
   });
   const chunks: Buffer[] = [];
@@ -29,20 +30,10 @@ export async function renderDocumentPdf(
     doc.on("error", reject);
   });
   const t = messages[locale].invoice;
+  const dt = messages[locale].documents;
   const money = (v: string) =>
     d.currency ? formatMoneyExact(v, d.currency, locale) : v;
-  const label = (v: string) =>
-    d.kind === "invoice"
-      ? ((
-          {
-            "Due date": t.dueDate,
-            "Sales order": t.order,
-            Subtotal: t.subtotal,
-            Tax: t.tax,
-            Total: t.total,
-          } as Record<string, string>
-        )[v] ?? v)
-      : v;
+  const label = (v: string) => documentLabel(v, locale);
   if (d.company.logo) {
     doc.image(Buffer.from(d.company.logo.data, "base64"), { fit: [100, 50] });
     doc.moveDown(0.4);
@@ -67,7 +58,7 @@ export async function renderDocumentPdf(
     .moveDown()
     .fontSize(19)
     .fillColor("#153e3b")
-    .text(`${d.kind === "invoice" ? t.title : d.title} · ${d.number}`);
+    .text(`${documentTitle(d.kind, locale)} · ${d.number}`);
   doc
     .fontSize(9)
     .fillColor("#202a29")
@@ -78,9 +69,7 @@ export async function renderDocumentPdf(
     doc
       .moveDown()
       .fillColor("#8b4c05")
-      .text(
-        "Live preview: historical snapshot unavailable; current names and company details may differ from the original transaction.",
-      )
+      .text(dt.livePreview)
       .fillColor("#202a29");
   doc.moveDown(0.5).fontSize(8).text(t.note);
   if (d.party) {
@@ -89,7 +78,7 @@ export async function renderDocumentPdf(
       .fontSize(11)
       .text(
         d.kind === "purchase-order" || d.kind === "material-receipt"
-          ? "Supplier"
+          ? dt.supplier
           : t.buyer,
       );
     doc.fontSize(9);
@@ -131,7 +120,7 @@ export async function renderDocumentPdf(
       .moveDown()
       .fontSize(11)
       .fillColor("#153e3b")
-      .text(section.title)
+      .text(label(section.title))
       .fillColor("#202a29")
       .fontSize(9)
       .text(section.content);
@@ -147,9 +136,9 @@ export async function renderDocumentPdf(
   doc
     .moveDown(2)
     .fontSize(9)
-    .text("Prepared by: ______________________________")
+    .text(`${dt.preparedBy}: ______________________________`)
     .moveDown()
-    .text("Received / approved by: ______________________________");
+    .text(`${dt.receivedBy}: ______________________________`);
   for (const attachment of attachments) {
     doc.file(attachment.data, { name: attachment.name, type: attachment.mime });
     if (attachment.mime === "image/png" || attachment.mime === "image/jpeg") {

@@ -1,4 +1,4 @@
-import { redirect } from "next/navigation";
+import { redirect, notFound } from "next/navigation";
 import { db } from "@/db";
 import * as s from "@/db/schema";
 import { currentActor } from "@/auth";
@@ -9,6 +9,8 @@ import { DataTable } from "@/components/data-table";
 export default async function SubcontractorsPage() {
   const actor = await currentActor();
   if (!actor) redirect("/login");
+  if (!can(actor.role, "manufacturing") && !can(actor.role, "suppliers"))
+    notFound();
   const [profiles, suppliers] = await Promise.all([
     db().select().from(s.subcontractors),
     db().select().from(s.suppliers),

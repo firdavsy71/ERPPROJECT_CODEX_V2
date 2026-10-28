@@ -31,6 +31,15 @@ type Context = {
   ) => Promise<string>;
 };
 
+async function requireActiveEmployee(tx: Tx, employeeId: string) {
+  const [employee] = await tx
+    .select({ active: s.employees.active })
+    .from(s.employees)
+    .where(eq(s.employees.id, employeeId))
+    .for("share");
+  if (!employee?.active) throw new Error("Select an active employee.");
+}
+
 export async function repairAction(
   tx: Tx,
   action: string,
@@ -66,16 +75,7 @@ export async function repairAction(
       )[0]
     )
       throw new Error("Product variant not found.");
-    if (
-      v.employeeId &&
-      !(
-        await tx
-          .select()
-          .from(s.employees)
-          .where(eq(s.employees.id, v.employeeId))
-      )[0]?.active
-    )
-      throw new Error("Select an active employee.");
+    if (v.employeeId) await requireActiveEmployee(tx, v.employeeId);
     const [order] = await tx
       .insert(s.repairOrders)
       .values({
@@ -92,14 +92,12 @@ export async function repairAction(
         createdBy: c.actorId,
       })
       .returning();
-    await tx
-      .insert(s.repairEvents)
-      .values({
-        repairId: order.id,
-        event: "Received",
-        notes: v.instructions,
-        actorId: c.actorId,
-      });
+    await tx.insert(s.repairEvents).values({
+      repairId: order.id,
+      event: "Received",
+      notes: v.instructions,
+      actorId: c.actorId,
+    });
     return;
   }
   const { id: repairId } = z.object({ id }).parse(input);
@@ -138,6 +136,8 @@ export async function repairAction(
       throw new Error("Invalid repair status transition.");
     if (v.status === "In Progress" && !order.employeeId)
       throw new Error("Assign an employee before work begins.");
+    if (v.status === "In Progress" && order.employeeId)
+      await requireActiveEmployee(tx, order.employeeId);
     await tx
       .update(s.repairOrders)
       .set({
@@ -145,14 +145,12 @@ export async function repairAction(
         ...(v.status === "Completed" ? { completionNotes: v.notes } : {}),
       })
       .where(eq(s.repairOrders.id, repairId));
-    await tx
-      .insert(s.repairEvents)
-      .values({
-        repairId,
-        event: v.status,
-        notes: v.notes,
-        actorId: c.actorId,
-      });
+    await tx.insert(s.repairEvents).values({
+      repairId,
+      event: v.status,
+      notes: v.notes,
+      actorId: c.actorId,
+    });
   } else if (action === "assignRepair") {
     const v = z
       .object({
@@ -164,11 +162,7 @@ export async function repairAction(
       .parse(input);
     if (["Completed"].includes(order.status))
       throw new Error("Completed repairs cannot be changed.");
-    const [employee] = await tx
-      .select()
-      .from(s.employees)
-      .where(eq(s.employees.id, v.employeeId));
-    if (!employee?.active) throw new Error("Select an active employee.");
+    await requireActiveEmployee(tx, v.employeeId);
     await tx
       .update(s.repairOrders)
       .set({
@@ -177,14 +171,12 @@ export async function repairAction(
         cost: v.cost,
       })
       .where(eq(s.repairOrders.id, repairId));
-    await tx
-      .insert(s.repairEvents)
-      .values({
-        repairId,
-        event: "Assignment / estimate",
-        notes: v.notes,
-        actorId: c.actorId,
-      });
+    await tx.insert(s.repairEvents).values({
+      repairId,
+      event: "Assignment / estimate",
+      notes: v.notes,
+      actorId: c.actorId,
+    });
   } else if (action === "requireRepairMaterial") {
     const v = z.object({ materialId: id, quantity, notes: note }).parse(input);
     if (
@@ -198,22 +190,18 @@ export async function repairAction(
       .from(s.materials)
       .where(eq(s.materials.id, v.materialId));
     if (!material?.active) throw new Error("Select an active material.");
-    await tx
-      .insert(s.repairRequirements)
-      .values({
-        repairId,
-        materialId: v.materialId,
-        quantity: v.quantity,
-        notes: v.notes,
-      });
-    await tx
-      .insert(s.repairEvents)
-      .values({
-        repairId,
-        event: "Material requirement",
-        notes: v.notes,
-        actorId: c.actorId,
-      });
+    await tx.insert(s.repairRequirements).values({
+      repairId,
+      materialId: v.materialId,
+      quantity: v.quantity,
+      notes: v.notes,
+    });
+    await tx.insert(s.repairEvents).values({
+      repairId,
+      event: "Material requirement",
+      notes: v.notes,
+      actorId: c.actorId,
+    });
   } else if (action === "consumeRepairMaterial") {
     const v = z
       .object({
@@ -232,24 +220,20 @@ export async function repairAction(
       v.quantity,
       v.rollId || undefined,
     );
-    await tx
-      .insert(s.repairMaterialUsage)
-      .values({
-        repairId,
-        materialId: v.materialId,
-        rollId: v.rollId || null,
-        quantity: v.quantity,
-        movementId,
-        createdBy: c.actorId,
-      });
-    await tx
-      .insert(s.repairEvents)
-      .values({
-        repairId,
-        event: "Material consumed",
-        notes: v.notes,
-        actorId: c.actorId,
-      });
+    await tx.insert(s.repairMaterialUsage).values({
+      repairId,
+      materialId: v.materialId,
+      rollId: v.rollId || null,
+      quantity: v.quantity,
+      movementId,
+      createdBy: c.actorId,
+    });
+    await tx.insert(s.repairEvents).values({
+      repairId,
+      event: "Material consumed",
+      notes: v.notes,
+      actorId: c.actorId,
+    });
   } else if (action === "recordRepairLabor") {
     const v = z
       .object({
@@ -260,27 +244,19 @@ export async function repairAction(
       .parse(input);
     if (order.status !== "In Progress")
       throw new Error("Labor can only be recorded while work is in progress.");
-    const [employee] = await tx
-      .select()
-      .from(s.employees)
-      .where(eq(s.employees.id, v.employeeId));
-    if (!employee?.active) throw new Error("Select an active employee.");
-    await tx
-      .insert(s.repairLabor)
-      .values({
-        repairId,
-        employeeId: v.employeeId,
-        minutes: v.minutes,
-        notes: v.notes,
-        createdBy: c.actorId,
-      });
-    await tx
-      .insert(s.repairEvents)
-      .values({
-        repairId,
-        event: "Labor recorded",
-        notes: v.notes,
-        actorId: c.actorId,
-      });
+    await requireActiveEmployee(tx, v.employeeId);
+    await tx.insert(s.repairLabor).values({
+      repairId,
+      employeeId: v.employeeId,
+      minutes: v.minutes,
+      notes: v.notes,
+      createdBy: c.actorId,
+    });
+    await tx.insert(s.repairEvents).values({
+      repairId,
+      event: "Labor recorded",
+      notes: v.notes,
+      actorId: c.actorId,
+    });
   } else throw new Error("Unknown repair action.");
 }

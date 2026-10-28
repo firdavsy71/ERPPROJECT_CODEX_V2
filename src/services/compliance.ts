@@ -5,6 +5,7 @@ import { db } from "@/db";
 import * as s from "@/db/schema";
 import { type Actor, authorize } from "@/lib/permissions";
 import { validateAttachment } from "@/services/specifications";
+import { businessDate } from "@/i18n/format";
 
 type Tx = Parameters<Parameters<ReturnType<typeof db>["transaction"]>[0]>[0];
 export const evidenceKinds = [
@@ -33,7 +34,7 @@ type Version = typeof s.certifications.$inferSelect;
 export function complianceStatus(
   version: Version,
   versions: Version[],
-  today = new Date().toISOString().slice(0, 10),
+  today = businessDate(new Date()),
 ) {
   if (version.status === "Draft") return "Draft";
   const effective = versions
@@ -54,7 +55,7 @@ export function complianceStatus(
 export function expiresSoon(
   version: Version,
   versions: Version[],
-  today = new Date().toISOString().slice(0, 10),
+  today = businessDate(new Date()),
   days = 30,
 ) {
   if (complianceStatus(version, versions, today) !== "Certified") return false;
@@ -193,7 +194,9 @@ export async function complianceAction(
       if (previous.productId !== v.productId)
         throw new Error("A certification series cannot change product.");
       if (previous.version > 1 && previous.standardId !== v.standardId)
-        throw new Error("A certification series cannot change its safety standard.");
+        throw new Error(
+          "A certification series cannot change its safety standard.",
+        );
       await tx
         .update(s.certifications)
         .set(fields)
@@ -214,7 +217,9 @@ export async function complianceAction(
     if (previous.productId !== v.productId)
       throw new Error("A certification series cannot change product.");
     if (previous.standardId !== v.standardId)
-      throw new Error("A certification series cannot change its safety standard.");
+      throw new Error(
+        "A certification series cannot change its safety standard.",
+      );
     const [latest] = await tx
       .select()
       .from(s.certifications)
@@ -318,20 +323,18 @@ export async function uploadComplianceEvidence(
       )[0]
     )
       throw new Error("Supplier not found.");
-    await tx
-      .insert(s.certificationAttachments)
-      .values({
-        certificationId: id,
-        kind: parsedKind,
-        name: file.name,
-        mime: file.mime,
-        bytes: file.data.length,
-        data: file.data.toString("base64"),
-        sha256: createHash("sha256").update(file.data).digest("hex"),
-        materialId: material || null,
-        supplierId: supplier || null,
-        createdBy: actor.id,
-      });
+    await tx.insert(s.certificationAttachments).values({
+      certificationId: id,
+      kind: parsedKind,
+      name: file.name,
+      mime: file.mime,
+      bytes: file.data.length,
+      data: file.data.toString("base64"),
+      sha256: createHash("sha256").update(file.data).digest("hex"),
+      materialId: material || null,
+      supplierId: supplier || null,
+      createdBy: actor.id,
+    });
     await event(
       tx,
       id,
@@ -339,13 +342,11 @@ export async function uploadComplianceEvidence(
       `${parsedKind}: ${file.name}`,
       actor.id,
     );
-    await tx
-      .insert(s.audit)
-      .values({
-        actorId: actor.id,
-        action: "compliance.evidence",
-        entityId: id,
-      });
+    await tx.insert(s.audit).values({
+      actorId: actor.id,
+      action: "compliance.evidence",
+      entityId: id,
+    });
   });
 }
 export async function readComplianceEvidence(

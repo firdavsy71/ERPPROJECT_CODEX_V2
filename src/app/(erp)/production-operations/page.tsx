@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { redirect } from "next/navigation";
+import { redirect, notFound } from "next/navigation";
 import Decimal from "decimal.js";
 import { db } from "@/db";
 import * as s from "@/db/schema";
@@ -11,6 +11,7 @@ import { operationNames } from "@/services/labor";
 export default async function OperationsPage() {
   const actor = await currentActor();
   if (!actor) redirect("/login");
+  if (!can(actor.role, "manufacturing")) notFound();
   const [products, routes, orders, fixed, entries, employees] =
     await Promise.all([
       db().select().from(s.products),

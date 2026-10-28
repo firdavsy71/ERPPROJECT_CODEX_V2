@@ -18,6 +18,7 @@ export default async function ReturnDetail({
   const actor = await currentActor();
   if (!actor) redirect("/login");
   if (!can(actor.role, "returns.read")) notFound();
+  const financial = can(actor.role, "invoices");
   const { id } = await params;
   if (!z.uuid().safeParse(id).success) notFound();
   const [rma] = await db()
@@ -40,17 +41,25 @@ export default async function ReturnDetail({
     db().select().from(s.returnReceipts),
     db().select().from(s.returnInspections),
     db().select().from(s.returnQuarantineDispositions),
-    db().select().from(s.returnSettlements),
-    db()
+    db().select({
+      id: s.returnSettlements.id, returnItemId: s.returnSettlements.returnItemId,
+      kind: s.returnSettlements.kind, quantity: s.returnSettlements.quantity,
+      status: s.returnSettlements.status, replacementVariantId: s.returnSettlements.replacementVariantId,
+      replacementOrderId: s.returnSettlements.replacementOrderId,
+      ...(financial ? { amount: s.returnSettlements.amount, notes: s.returnSettlements.notes } : {}),
+    }).from(s.returnSettlements),
+    financial ? db()
       .select()
       .from(s.returnCreditNotes)
-      .where(eq(s.returnCreditNotes.invoiceId, rma.invoiceId)),
-    db()
+      .where(eq(s.returnCreditNotes.invoiceId, rma.invoiceId)) : Promise.resolve([]),
+    financial ? db()
       .select()
       .from(s.returnRefunds)
-      .where(eq(s.returnRefunds.invoiceId, rma.invoiceId)),
+      .where(eq(s.returnRefunds.invoiceId, rma.invoiceId)) : Promise.resolve([]),
     db()
-      .select()
+      .select({ id: s.returnEvents.id, action: s.returnEvents.action, createdAt: s.returnEvents.createdAt,
+        ...(financial ? { notes: s.returnEvents.notes } : {}),
+      })
       .from(s.returnEvents)
       .where(eq(s.returnEvents.returnId, id))
       .orderBy(s.returnEvents.createdAt),
@@ -68,15 +77,15 @@ export default async function ReturnDetail({
     settlements = allSettlements.filter((q) =>
       items.some((l) => l.id === q.returnItemId),
     );
-  const [position] = await db().transaction(async (tx) => [
+  const [position] = financial ? await db().transaction(async (tx) => [
     await invoiceReturnPosition(tx, rma.invoiceId),
-  ]);
-  const [invoice] = await db()
-    .select()
+  ]) : [null];
+  const [invoice] = financial ? await db()
+    .select({ number: s.invoices.number })
     .from(s.invoices)
-    .where(eq(s.invoices.id, rma.invoiceId));
+    .where(eq(s.invoices.id, rma.invoiceId)) : [];
   const [sale] = await db()
-    .select()
+    .select({ number: s.sales.number, currency: s.sales.currency })
     .from(s.sales)
     .where(eq(s.sales.id, rma.orderId));
   const note: Field = {
@@ -111,20 +120,20 @@ export default async function ReturnDetail({
       <p>
         <Link href={`/sales/${rma.orderId}`}>Original sale {sale.number}</Link>{" "}
         ·{" "}
-        <Link href={`/invoices/${rma.invoiceId}`}>
-          Original invoice {invoice.number}
-        </Link>
+        {financial && <Link href={`/invoices/${rma.invoiceId}`}>
+          Original invoice {invoice?.number}
+        </Link>}
         {can(actor.role, "shipping.read") && (
           <> · <Link href={`/deliveries?orderId=${rma.orderId}`}>
             Original shipping history
           </Link></>
         )}
       </p>
-      <p>
+      {position && <p>
         Invoice credits {position.credited} · Refunds recorded{" "}
         {position.refunded} · Due {position.due} · Customer credit balance{" "}
         {position.creditBalance} {sale.currency}
-      </p>
+      </p>}
       <div className="actions">
         {can(actor.role, "returns.sales") && rma.status === "Requested" && (
           <>
@@ -460,7 +469,7 @@ export default async function ReturnDetail({
               ]}
             />
           )}
-          {Number(position.creditBalance) > 0 && (
+          {position && Number(position.creditBalance) > 0 && (
             <ActionForm
               label="Record externally paid credit-balance refund"
               action="recordReturnRefund"
@@ -489,20 +498,19 @@ export default async function ReturnDetail({
           kind: q.kind,
           quantity: q.quantity,
           status: q.status,
-          amount: q.amount,
+          ...(financial ? { amount: q.amount, notes: q.notes } : {}),
           target: variants.find((v) => v.id === q.replacementVariantId)?.sku,
-          notes: q.notes,
         }))}
         columns={[
           { key: "kind", label: "Resolution" },
           { key: "quantity", label: "Units" },
           { key: "status", label: "Status" },
-          {
+          ...(financial ? [{
             key: "amount",
             label: `Credit estimate / issued amount (${sale.currency})`,
-          },
+          }] : []),
           { key: "target", label: "Exchange variant" },
-          { key: "notes", label: "Request notes" },
+          ...(financial ? [{ key: "notes", label: "Request notes" }] : []),
         ]}
       />
       {settlements
@@ -523,7 +531,7 @@ export default async function ReturnDetail({
             )}
           </p>
         ))}
-      <h2>Issued credit notes</h2>
+      {financial && <><h2>Issued credit notes</h2>
       <DataTable
         rows={credits.map((c) => ({
           ...c,
@@ -548,6 +556,7 @@ export default async function ReturnDetail({
           { key: "notes", label: "Evidence notes" },
         ]}
       />
+      </>}
       <h2>Return receipt history</h2>
       <DataTable
         rows={receipts.map((r) => ({

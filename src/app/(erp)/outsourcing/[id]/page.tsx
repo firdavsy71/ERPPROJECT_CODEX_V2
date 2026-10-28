@@ -18,6 +18,8 @@ export default async function OutsourcingDetail({
 }) {
   const actor = await currentActor();
   if (!actor) redirect("/login");
+  if (!can(actor.role, "manufacturing") && !can(actor.role, "inventory"))
+    notFound();
   const { id } = await params;
   if (!z.uuid().safeParse(id).success) notFound();
   const [o] = await db()

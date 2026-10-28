@@ -33,8 +33,8 @@ export function RowsEditor<T extends Record<string, string>>({
   options?: Partial<Record<keyof T, readonly string[]>>;
 }) {
   return (
-    <section className="spec-rows">
-      <h3>{label}</h3>
+    <section className="spec-rows" aria-label={label}>
+      <div className="section-heading"><h3>{label}</h3><span className="muted">{rows.length} {rows.length === 1 ? "entry" : "entries"}</span></div>
       {rows.map((r, i) => (
         <div className="spec-row" key={i}>
           <div className="form-grid">
@@ -147,6 +147,8 @@ export function SpecificationEditor({
   return (
     <form
       className="detail-card spec-editor"
+      aria-label="Technical specification editor"
+      aria-busy={pending}
       onSubmit={(e) => {
         e.preventDefault();
         start(async () => {
@@ -169,6 +171,20 @@ export function SpecificationEditor({
         });
       }}
     >
+      <header className="editor-intro">
+        <p className="eyebrow">PRODUCT ENGINEERING / DRAFT WORKSPACE</p>
+        <h2>{initial ? "Refine the specification" : "Define the garment"}</h2>
+        <p className="muted">Work from product identity to construction, measurements and variant requirements. Saving a draft does not approve it for production.</p>
+        <nav className="editor-nav" aria-label="Specification sections">
+          <a href="#spec-identity">01 / Identity</a>
+          <a href="#spec-fabric">02 / Fabric</a>
+          <a href="#spec-variants">03 / Variants</a>
+          <a href="#spec-save">Save draft</a>
+        </nav>
+      </header>
+      <fieldset disabled={pending} className="editor-fields">
+      <legend className="sr-only">Specification contents</legend>
+      <h2 id="spec-identity">Product identity & construction</h2>
       <div className="form-grid">
         <label className="field">
           <span>Product</span>
@@ -243,7 +259,7 @@ export function SpecificationEditor({
           </label>
         ))}
       </div>
-      <h2>Fabric specifications & composition</h2>
+      <h2 id="spec-fabric">Fabric specifications & composition</h2>
       {document.fabrics.map((f, i) => (
         <section className="spec-row" key={i}>
           <div className="form-grid">
@@ -404,7 +420,7 @@ export function SpecificationEditor({
           )
         }
       />
-      <h2>Variant manufacturing details</h2>
+      <h2 id="spec-variants">Variant manufacturing details</h2>
       <p className="muted">
         Select the variants covered by this version. Each requires fabric
         consumption. Empty measurement overrides inherit the size chart; empty
@@ -496,9 +512,10 @@ export function SpecificationEditor({
             </section>
           );
         })}
-      <div className="actions">
+      </fieldset>
+      <div className="actions editor-actions" id="spec-save">
         <Button disabled={pending}>{pending ? "Saving…" : "Save draft"}</Button>
-        <span role="alert">{message}</span>
+        <span role="status" aria-live="polite">{message}</span>
       </div>
       <p className="muted">
         Upload drawings and reference images after saving the draft.

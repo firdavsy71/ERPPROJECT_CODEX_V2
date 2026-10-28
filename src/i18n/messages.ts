@@ -1,9 +1,11 @@
+import { documentMessages } from "./documents";
 export const locales = ["en", "ru", "uz"] as const;
 export type Locale = (typeof locales)[number];
 export function resolveLocale(value?: string): Locale {
   return locales.includes(value as Locale) ? (value as Locale) : "en";
 }
 const en = {
+  documents: documentMessages.en,
   nav: {
     dashboard: "Overview",
     sales: "Sales orders",
@@ -133,6 +135,7 @@ const en = {
   },
 };
 const ru: typeof en = {
+  documents: documentMessages.ru,
   nav: {
     dashboard: "Обзор",
     sales: "Заказы покупателей",
@@ -262,6 +265,7 @@ const ru: typeof en = {
   },
 };
 const uz: typeof en = {
+  documents: documentMessages.uz,
   nav: {
     dashboard: "Umumiy ko‘rinish",
     sales: "Mijoz buyurtmalari",

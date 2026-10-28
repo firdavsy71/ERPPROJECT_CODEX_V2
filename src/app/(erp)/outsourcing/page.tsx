@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { redirect } from "next/navigation";
+import { redirect, notFound } from "next/navigation";
 import Decimal from "decimal.js";
 import { db } from "@/db";
 import * as s from "@/db/schema";
@@ -11,6 +11,8 @@ import { DataTable } from "@/components/data-table";
 export default async function OutsourcingPage() {
   const actor = await currentActor();
   if (!actor) redirect("/login");
+  if (!can(actor.role, "manufacturing") && !can(actor.role, "inventory"))
+    notFound();
   const [orders, profiles, suppliers, mos, variants, receipts, costs, custody] =
     await Promise.all([
       db().select().from(s.outsourcingOrders),

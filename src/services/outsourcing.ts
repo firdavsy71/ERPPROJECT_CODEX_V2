@@ -110,13 +110,11 @@ export async function outsourcingAction(
     if (!profile?.active || !supplier?.active)
       throw new Error("Choose an active subcontractor and supplier");
     if (action === "createOutsourcing")
-      await tx
-        .insert(s.outsourcingOrders)
-        .values({
-          ...v,
-          number: `OUT-${randomUUID().slice(0, 8).toUpperCase()}`,
-          createdBy: c.actor.id,
-        });
+      await tx.insert(s.outsourcingOrders).values({
+        ...v,
+        number: `OUT-${randomUUID().slice(0, 8).toUpperCase()}`,
+        createdBy: c.actor.id,
+      });
     else {
       const { id } = z.object({ id: z.uuid() }).parse(input);
       const [o] = await tx
@@ -160,6 +158,20 @@ export async function outsourcingAction(
   if (action === "activateOutsourcing") {
     if (o.status !== "Draft" || mo.status !== "Draft")
       throw new Error("Only draft outsourcing can be activated");
+    if (mo.saleItemId) {
+      const [line] = await tx
+        .select()
+        .from(s.saleItems)
+        .where(eq(s.saleItems.id, mo.saleItemId));
+      const [sale] = await tx
+        .select()
+        .from(s.sales)
+        .where(eq(s.sales.id, line.orderId));
+      if (["Draft", "Cancelled"].includes(sale.status))
+        throw new Error(
+          "Confirm the sales order before reserving outsourcing materials",
+        );
+    }
     const [profile] = await tx
       .select()
       .from(s.subcontractors)
@@ -327,33 +339,29 @@ export async function outsourcingAction(
       "issue",
     );
     if (roll)
-      await tx
-        .insert(s.fabricRollMovements)
-        .values({
-          rollId: roll.id,
-          inventoryMovementId: m.id,
-          manufacturingOrderId: mo.id,
-          materialReservationId: r.id,
-          quantity: f(n(v.quantity).neg()),
-          reservedDelta: f(n(v.quantity).neg()),
-          segments,
-          reason: "Custody transfer, not consumed",
-          source: o.number,
-          operationKey: c.key + ":roll",
-          createdBy: c.actor.id,
-        });
-    await tx
-      .insert(s.outsourcingCustody)
-      .values({
-        orderId: id,
-        reservationId: r.id,
-        rollId: roll?.id,
-        quantity: v.quantity,
+      await tx.insert(s.fabricRollMovements).values({
+        rollId: roll.id,
+        inventoryMovementId: m.id,
+        manufacturingOrderId: mo.id,
+        materialReservationId: r.id,
+        quantity: f(n(v.quantity).neg()),
+        reservedDelta: f(n(v.quantity).neg()),
         segments,
-        movementId: m.id,
-        reference: v.reference,
+        reason: "Custody transfer, not consumed",
+        source: o.number,
+        operationKey: c.key + ":roll",
         createdBy: c.actor.id,
       });
+    await tx.insert(s.outsourcingCustody).values({
+      orderId: id,
+      reservationId: r.id,
+      rollId: roll?.id,
+      quantity: v.quantity,
+      segments,
+      movementId: m.id,
+      reference: v.reference,
+      createdBy: c.actor.id,
+    });
     return;
   }
   if (action === "settleOutsourcingMaterial") {
@@ -445,17 +453,15 @@ export async function outsourcingAction(
           : { returned: f(n(line.returned).add(v.quantity)) },
       )
       .where(eq(s.outsourcingCustody.id, line.id));
-    await tx
-      .insert(s.outsourcingMaterialEvents)
-      .values({
-        custodyId: line.id,
-        kind: v.kind,
-        quantity: v.quantity,
-        reference: v.reference,
-        returnedRollId,
-        movementId,
-        createdBy: c.actor.id,
-      });
+    await tx.insert(s.outsourcingMaterialEvents).values({
+      custodyId: line.id,
+      kind: v.kind,
+      quantity: v.quantity,
+      reference: v.reference,
+      returnedRollId,
+      movementId,
+      createdBy: c.actor.id,
+    });
     return;
   }
   if (action === "receiveOutsourcing") {
@@ -509,16 +515,14 @@ export async function outsourcingAction(
           "finished",
         )
       : undefined;
-    await tx
-      .insert(s.outsourcingReceipts)
-      .values({
-        ...v,
-        brandingCheck: mo.brandingVersionId ? v.brandingCheck || null : null,
-        orderId: id,
-        qualityResults,
-        movementId: movement?.id,
-        createdBy: c.actor.id,
-      });
+    await tx.insert(s.outsourcingReceipts).values({
+      ...v,
+      brandingCheck: mo.brandingVersionId ? v.brandingCheck || null : null,
+      orderId: id,
+      qualityResults,
+      movementId: movement?.id,
+      createdBy: c.actor.id,
+    });
     return;
   }
   if (action === "closeOutsourcing") {
@@ -577,23 +581,21 @@ export async function outsourcingAction(
     }
     const accepted = receipts.reduce((n, r) => n + r.accepted, 0),
       rejected = mo.quantity - accepted;
-    await tx
-      .insert(s.inspections)
-      .values({
-        orderId: mo.id,
-        approved: accepted,
-        rejected,
-        inspectorId: c.actor.id,
-        specificationId: mo.specificationId,
-        brandingVersionId: mo.brandingVersionId,
-        brandingCheck: mo.brandingVersionId
-          ? accepted > 0
-            ? "Pass"
-            : "Fail"
-          : null,
-        specificationResults: [],
-        notes: `Outsourcing ${o.number}; individual inspection results retained on partial receipts`,
-      });
+    await tx.insert(s.inspections).values({
+      orderId: mo.id,
+      approved: accepted,
+      rejected,
+      inspectorId: c.actor.id,
+      specificationId: mo.specificationId,
+      brandingVersionId: mo.brandingVersionId,
+      brandingCheck: mo.brandingVersionId
+        ? accepted > 0
+          ? "Pass"
+          : "Fail"
+        : null,
+      specificationResults: [],
+      notes: `Outsourcing ${o.number}; individual inspection results retained on partial receipts`,
+    });
     await tx
       .update(s.manufacturing)
       .set({ status: "Completed", completed: accepted, defective: rejected })

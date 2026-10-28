@@ -8,6 +8,7 @@ import {
 } from "../src/i18n/format";
 import { messages, resolveLocale } from "../src/i18n/messages";
 import { discountedLineTotal } from "../src/lib/money";
+import { documentLabel, documentTitle } from "../src/i18n/documents";
 describe("localization", () => {
   it("has matching structured dictionaries and safely resolves languages", () => {
     for (const section of Object.keys(
@@ -43,5 +44,15 @@ describe("localization", () => {
       "Jan 2, 2026",
     );
     expect(formatDateOnly("2026-01-01", "en")).toContain("Jan 1, 2026");
+    expect(formatDateOnly("2024-02-29", "en")).toContain("Feb 29, 2024");
+    for (const invalid of ["2026-02-29", "2026-02-30", "2026-04-31", "2026-13-01"])
+      expect(() => formatDateOnly(invalid)).toThrow("valid ISO calendar date");
+  });
+  it("localizes document templates without translating persisted descriptions", () => {
+    expect(documentTitle("purchase-order", "ru")).toBe("Заказ поставщику");
+    expect(documentTitle("packing-list", "uz")).toBe("Qadoqlash ro‘yxati");
+    expect(documentLabel("Tax rate", "uz")).toBe("Soliq stavkasi");
+    expect(documentLabel("Expected date", "ru")).toBe("Ожидаемая дата");
+    expect(documentLabel("Special instructions from customer", "ru")).toBe("Special instructions from customer");
   });
 });

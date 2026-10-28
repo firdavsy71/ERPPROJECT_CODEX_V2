@@ -142,7 +142,7 @@ test("administrator runs a persisted sales-to-production workflow through the UI
     "Completed",
   );
   await page.goto("/dashboard");
-  await expect(page.getByText("Business overview.")).toBeVisible();
+  await expect(page.getByRole("heading", {name:"Overview.",exact:true})).toBeVisible();
   await expect(page.locator(".financial-row")).toContainText("Total invoiced");
   expect(
     Number(await page.locator(".kpi").nth(2).locator("strong").innerText()),

@@ -11,6 +11,7 @@ import { certificationFields } from "@/lib/compliance-fields";
 import { ActionForm } from "@/components/forms";
 import { ComplianceUpload } from "@/components/compliance-upload";
 import { DataTable } from "@/components/data-table";
+import { businessDate } from "@/i18n/format";
 export default async function ComplianceDetail({
   params,
 }: {
@@ -35,6 +36,7 @@ export default async function ComplianceDetail({
     events,
     materials,
     suppliers,
+    company,
   ] = await Promise.all([
     db()
       .select()
@@ -59,7 +61,9 @@ export default async function ComplianceDetail({
       .where(eq(s.certificationEvents.certificationId, id)),
     db().select().from(s.materials),
     db().select().from(s.suppliers),
+    db().select({ timezone: s.settings.timezone }).from(s.settings).limit(1),
   ]);
+  const today = businessDate(new Date(), company[0]?.timezone);
   const latest = Math.max(...versions.map((x) => x.version));
   const defaults = {
     productId: v.productId,
@@ -85,8 +89,8 @@ export default async function ComplianceDetail({
             {v.certificateNumber} · v{v.version}
           </h1>
           <p>
-            {complianceStatus(v, versions)}
-            {expiresSoon(v, versions) ? " · Expires within 30 days" : ""}
+            {complianceStatus(v, versions, today)}
+            {expiresSoon(v, versions, today) ? " · Expires within 30 days" : ""}
           </p>
         </div>
         <Link href="/compliance">All certificates</Link>
@@ -182,7 +186,7 @@ export default async function ComplianceDetail({
           .map((x) => (
             <li key={x.id}>
               <Link href={`/compliance/${x.id}`}>
-                v{x.version} · {complianceStatus(x, versions)} ·{" "}
+                v{x.version} · {complianceStatus(x, versions, today)} ·{" "}
                 {x.certificateNumber}
               </Link>
             </li>

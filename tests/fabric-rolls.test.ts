@@ -373,6 +373,10 @@ describe("fabric roll inventory and traceability", () => {
       cutPieces: [{ part: "Sleeve", quantity: 20, rejected: 2 }],
     };
     const key = randomUUID();
+    await expect(
+      act("completeCutting", { ...input, issued: "101", returned: "77" }),
+    ).rejects.toThrow("Fabric issued exceeds");
+    expect((await db().select().from(s.cuttingBatches))[0].status).toBe("Planned");
     await act("completeCutting", input, key);
     await act("completeCutting", input, key);
     expect(
@@ -630,6 +634,14 @@ describe("fabric roll inventory and traceability", () => {
     await expect(
       act("receive", { id: po.id, lines: [{ id: line.id, quantity: "30" }] }),
     ).rejects.toThrow("roll");
+    const [otherSupplier] = await db().insert(s.suppliers).values({ name: "Unrelated supplier" }).returning();
+    await expect(act("receive", {
+      id: po.id,
+      lines: [{ id: line.id, quantity: "30", rolls: [{ ...roll("WRONG", "30"), supplierId: otherSupplier.id }] }],
+    })).rejects.toThrow("Roll supplier must match");
+    expect(await db().select().from(s.receipts)).toHaveLength(0);
+    expect(await db().select().from(s.fabricRolls)).toHaveLength(0);
+    expect((await db().select().from(s.purchaseItems))[0].received).toBe("0.0000");
     await act("receive", {
       id: po.id,
       lines: [

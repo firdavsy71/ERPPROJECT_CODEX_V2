@@ -1,4 +1,4 @@
-import { beforeAll, afterAll, beforeEach, it, expect } from "vitest";
+import { beforeAll, afterAll, beforeEach, it, expect, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { migrate } from "drizzle-orm/pglite/migrator";
 import { drizzle } from "drizzle-orm/pglite";
@@ -13,6 +13,7 @@ import {
   readComplianceEvidence,
 } from "../src/services/compliance";
 import type { Actor } from "../src/lib/permissions";
+import { businessDate } from "../src/i18n/format";
 process.env.PGLITE_DATA_DIR = ":memory:";
 delete process.env.DATABASE_URL;
 let actor: Actor, product: string, standard: string;
@@ -129,9 +130,16 @@ it("requires admin approval of actual certificate evidence and preserves version
   await expect(
     readComplianceEvidence({ id: actor.id, role: "viewer" }, v.id, file.id),
   ).rejects.toThrow("permission");
-  await act("createSafetyStandard", { reference: "OTHER", title: "Other reference" });
-  const other = (await db().select().from(s.safetyStandards)).find(x => x.reference === "OTHER")!;
-  await expect(act("reviseCertification", { id: v.id, ...fields(), standardId: other.id })).rejects.toThrow("safety standard");
+  await act("createSafetyStandard", {
+    reference: "OTHER",
+    title: "Other reference",
+  });
+  const other = (await db().select().from(s.safetyStandards)).find(
+    (x) => x.reference === "OTHER",
+  )!;
+  await expect(
+    act("reviseCertification", { id: v.id, ...fields(), standardId: other.id }),
+  ).rejects.toThrow("safety standard");
   await act("reviseCertification", {
     id: v.id,
     ...fields(),
@@ -204,4 +212,40 @@ it("validates dates and product links without fabricating evidence", async () =>
       "",
     ),
   ).rejects.toThrow("valid");
+});
+it("uses the business calendar for certificate expiration and alerts at UTC boundaries", async () => {
+  await act("createCertification", { ...fields(), expiryDate: "2026-11-28" });
+  const [draft] = await db().select().from(s.certifications);
+  await uploadComplianceEvidence(
+    actor,
+    draft.id,
+    fakeFile,
+    "Certificate",
+    "",
+    "",
+  );
+  await act("approveCertification", {
+    id: draft.id,
+    notes: "Evidence reviewed",
+  });
+  const versions = await db().select().from(s.certifications);
+  const version = versions[0];
+  vi.useFakeTimers();
+  try {
+    vi.setSystemTime(new Date("2026-10-28T19:00:00Z"));
+    expect(expiresSoon(version, versions)).toBe(true);
+    expect(
+      expiresSoon(version, versions, businessDate(new Date(), "UTC")),
+    ).toBe(false);
+    vi.setSystemTime(new Date("2026-11-28T18:59:59Z"));
+    expect(complianceStatus(version, versions)).toBe("Certified");
+    vi.setSystemTime(new Date("2026-11-28T19:00:00Z"));
+    expect(complianceStatus(version, versions)).toBe("Expired");
+    expect(expiresSoon(version, versions)).toBe(false);
+    expect(
+      complianceStatus(version, versions, businessDate(new Date(), "UTC")),
+    ).toBe("Certified");
+  } finally {
+    vi.useRealTimers();
+  }
 });

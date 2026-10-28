@@ -1,10 +1,10 @@
 import Link from "next/link";
-import { redirect } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { db } from "@/db";
 import { specifications } from "@/db/schema";
 import { desc, eq } from "drizzle-orm";
 import { currentActor } from "@/auth";
-import { can } from "@/lib/permissions";
+import { can, canReadModule } from "@/lib/permissions";
 import { DataTable } from "@/components/data-table";
 import { z } from "zod";
 export default async function SpecificationsPage({
@@ -14,6 +14,7 @@ export default async function SpecificationsPage({
 }) {
   const actor = await currentActor();
   if (!actor) redirect("/login");
+  if (!canReadModule(actor.role, "products")) notFound();
   const { productId } = await searchParams;
   const rows = await db()
     .select()

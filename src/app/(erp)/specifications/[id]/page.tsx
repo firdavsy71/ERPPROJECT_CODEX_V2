@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { currentActor } from "@/auth";
-import { can } from "@/lib/permissions";
+import { can, canReadModule } from "@/lib/permissions";
 import { getSpecification } from "@/services/specifications";
 import { SpecificationSheet } from "@/components/specification-sheet";
 import { SpecificationEditor } from "@/components/specification-editor";
@@ -30,6 +30,7 @@ export default async function SpecificationDetail({
 }) {
   const actor = await currentActor();
   if (!actor) redirect("/login");
+  if (!canReadModule(actor.role, "products")) notFound();
   const { id } = await params;
   if (!z.uuid().safeParse(id).success) notFound();
   const spec = await getSpecification(id);
@@ -66,12 +67,21 @@ export default async function SpecificationDetail({
     );
   }
   const [linkedBoms, orders, qc, branding] = await Promise.all([
-    db().select().from(boms).where(eq(boms.specificationId, id)),
-    db()
-      .select()
-      .from(manufacturing)
-      .where(eq(manufacturing.specificationId, id)),
-    db().select().from(inspections).where(eq(inspections.specificationId, id)),
+    canReadModule(actor.role, "boms")
+      ? db().select().from(boms).where(eq(boms.specificationId, id))
+      : Promise.resolve([]),
+    canReadModule(actor.role, "manufacturing")
+      ? db()
+          .select()
+          .from(manufacturing)
+          .where(eq(manufacturing.specificationId, id))
+      : Promise.resolve([]),
+    canReadModule(actor.role, "manufacturing")
+      ? db()
+          .select()
+          .from(inspections)
+          .where(eq(inspections.specificationId, id))
+      : Promise.resolve([]),
     can(actor.role, "branding.read")
       ? db()
           .select()
@@ -83,7 +93,9 @@ export default async function SpecificationDetail({
     <>
       <div className="no-print">
         {can(actor.role, "compliance.read") && (
-          <Link href={`/compliance?specificationId=${id}&productId=${version.productId}`}>
+          <Link
+            href={`/compliance?specificationId=${id}&productId=${version.productId}`}
+          >
             Certificates linked to this specification
           </Link>
         )}
@@ -94,7 +106,13 @@ export default async function SpecificationDetail({
           <h1>Technical specification · v{version.version}</h1>
           <span className="badge">{version.status}</span>
         </div>
-        {can(actor.role,"specifications") && <p><Link href={`/documents/technical-specification/${id}`}>Technical specification document / PDF</Link></p>}
+        {can(actor.role, "specifications") && (
+          <p>
+            <Link href={`/documents/technical-specification/${id}`}>
+              Technical specification document / PDF
+            </Link>
+          </p>
+        )}
         <SpecificationControls
           id={id}
           status={version.status}

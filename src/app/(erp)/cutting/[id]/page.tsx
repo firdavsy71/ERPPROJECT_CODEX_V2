@@ -14,6 +14,7 @@ export default async function CuttingDetail({
 }) {
   const actor = await currentActor();
   if (!actor) redirect("/login");
+  if (!can(actor.role, "manufacturing")) notFound();
   const { id } = await params;
   if (!z.uuid().safeParse(id).success) notFound();
   const [b] = await db()

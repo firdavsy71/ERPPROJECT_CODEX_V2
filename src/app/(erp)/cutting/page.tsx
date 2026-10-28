@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { redirect } from "next/navigation";
+import { redirect, notFound } from "next/navigation";
 import { currentActor } from "@/auth";
 import { db } from "@/db";
 import * as s from "@/db/schema";
@@ -9,6 +9,7 @@ import { DataTable } from "@/components/data-table";
 export default async function CuttingPage() {
   const actor = await currentActor();
   if (!actor) redirect("/login");
+  if (!can(actor.role, "manufacturing")) notFound();
   const [batches, orders, reservations, rolls, variants, materials, balances] =
     await Promise.all([
       db().select().from(s.cuttingBatches),

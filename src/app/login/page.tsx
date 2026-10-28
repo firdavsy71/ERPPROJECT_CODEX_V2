@@ -1,6 +1,6 @@
 "use client";
 import { useActionState } from "react";
-import { Layers, ArrowRight, ShieldCheck } from "lucide-react";
+import { Layers, ArrowRight, ShieldCheck, LoaderCircle } from "lucide-react";
 import { loginAction } from "@/app/actions";
 import { Button } from "@/components/ui/button";
 export default function Login() {
@@ -9,35 +9,35 @@ export default function Login() {
     message: "",
   });
   return (
-    <main className="login">
-      <section className="login-story">
+    <main className="login" id="main-content">
+      <section className="login-story" aria-label="Workwear manufacturing workspace">
         <div className="brand">
-          <Layers size={32} /> workwear
+          <Layers size={32} aria-hidden="true" /> workwear
         </div>
         <div>
-          <p className="eyebrow">FROM FIRST THREAD TO FINAL DELIVERY</p>
+          <p className="eyebrow">WORKWEAR / OPERATIONS PLATFORM</p>
           <h1>
-            Good work.
+            Precision in
             <br />
-            All connected.
+            every thread.
           </h1>
           <p>
-            Your people, production, and inventory.
+            From material receipt to the final delivery.
             <br />
-            One clear picture of your business.
+            One connected manufacturing workspace.
           </p>
         </div>
-        <span>Workwear ERP / Manufacturing operations</span>
+        <div className="login-system-meta"><span>PLAN / PRODUCE / DELIVER</span><span>Workwear ERP</span></div>
       </section>
-      <section className="login-form">
+      <section className="login-form" aria-labelledby="login-title">
         <div>
           <span className="login-mark">
-            <ShieldCheck size={28} />
+            <ShieldCheck size={28} aria-hidden="true" />
           </span>
           <p className="eyebrow">YOUR WORKSPACE AWAITS</p>
-          <h2>Welcome back.</h2>
+          <h2 id="login-title">Welcome back.</h2>
           <p className="muted">Sign in to keep your operations moving.</p>
-          <form action={action}>
+          <form action={action} aria-busy={pending} aria-describedby="login-help">
             <label className="field">
               <span>Email address</span>
               <input
@@ -45,6 +45,7 @@ export default function Login() {
                 type="email"
                 autoComplete="username"
                 required
+                disabled={pending}
               />
             </label>
             <label className="field">
@@ -54,6 +55,7 @@ export default function Login() {
                 type="password"
                 autoComplete="current-password"
                 required
+                disabled={pending}
               />
             </label>
             {state.message && (
@@ -61,15 +63,16 @@ export default function Login() {
                 {state.message}
               </p>
             )}
-            <Button disabled={pending}>
+            <Button disabled={pending} type="submit">
+              {pending && <LoaderCircle size={17} className="animate-spin" aria-hidden="true" />}
               {pending ? "Signing in…" : "Sign in to workspace"}
-              <ArrowRight size={17} />
+              {!pending && <ArrowRight size={17} aria-hidden="true" />}
             </Button>
           </form>
-          <p className="login-help">
+          <p className="login-help" id="login-help">
             Access is managed by your administrator.
             <br />
-            Local setup credentials are stored in .env.local.
+            Contact your team administrator if you need help signing in.
           </p>
         </div>
       </section>

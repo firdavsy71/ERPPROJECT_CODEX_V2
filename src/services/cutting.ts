@@ -210,6 +210,15 @@ export async function cuttingAction(
       .filter((b) => b.id !== batch.id && b.status !== "Cancelled")
       .reduce((n, b) => n.add(b.result?.consumed ?? b.planned), new Decimal(0));
     if (
+      allocation &&
+      held.add(v.issued).gt(
+        new Decimal(allocation.quantity)
+          .minus(allocation.consumed)
+          .minus(allocation.released),
+      )
+    )
+      throw new Error("Fabric issued exceeds the reserved roll allocation");
+    if (
       !allocation ||
       held
         .add(result.consumed)

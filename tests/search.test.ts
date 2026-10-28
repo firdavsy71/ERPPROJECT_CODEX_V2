@@ -1,0 +1,22 @@
+import {beforeAll,afterAll,it,expect} from "vitest";
+import {migrate} from "drizzle-orm/pglite/migrator";
+import {drizzle} from "drizzle-orm/pglite";
+import {db,localClient} from "../src/db";
+import * as s from "../src/db/schema";
+import {searchRecords} from "../src/services/search";
+process.env.PGLITE_DATA_DIR=":memory:";
+delete process.env.DATABASE_URL;
+beforeAll(async()=>{await migrate(drizzle(localClient()!),{migrationsFolder:"drizzle"});});
+afterAll(async()=>{await localClient()?.close();});
+it("searches persisted records with role boundaries and literal wildcard handling",async()=>{
+  await db().insert(s.products).values({name:"Jacket North",sku:"NORTH"});
+  await db().insert(s.customers).values({name:"North Customer"});
+  await db().insert(s.materials).values({name:"North Fabric",sku:"NF",unit:"Meters"});
+  const actor={id:"test",role:"admin" as const};
+  expect((await searchRecords(actor,"North")).map(r=>r.group).sort()).toEqual(["Customers","Materials","Products"]);
+  expect(await searchRecords({...actor,role:"viewer"},"North")).toEqual([]);
+  expect((await searchRecords({...actor,role:"production"},"North")).map(r=>r.group).sort()).toEqual(["Materials","Products"]);
+  expect((await searchRecords({...actor,role:"sales"},"North")).map(r=>r.group).sort()).toEqual(["Customers","Products"]);
+  expect(await searchRecords(actor,"%_")).toEqual([]);
+  expect(await searchRecords(actor,"N")).toEqual([]);
+});

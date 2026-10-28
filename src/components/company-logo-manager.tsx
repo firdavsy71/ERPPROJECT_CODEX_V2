@@ -30,7 +30,7 @@ export function CompanyLogoManager() {
           }
         }}
       >
-        <label className="field">
+        <label className="field logo-upload-field">
           <span>Company logo · PNG or JPEG, up to 512 KiB</span>
           <input
             name="file"

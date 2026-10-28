@@ -222,3 +222,91 @@ it("uses the selected tracked roll and respects permissions", async () => {
     ),
   ).rejects.toThrow("permission");
 });
+
+it("requires an active assigned employee when work starts or resumes", async () => {
+  const order = await create();
+  await act("repairStatus", {
+    id: order.id,
+    status: "Diagnosed",
+    notes: "Assessed",
+  });
+  await db()
+    .update(s.employees)
+    .set({ active: false })
+    .where(eq(s.employees.id, employee));
+  const key = randomUUID();
+  await expect(
+    act(
+      "repairStatus",
+      { id: order.id, status: "In Progress", notes: "Start" },
+      key,
+    ),
+  ).rejects.toThrow("active employee");
+  expect((await db().select().from(s.repairOrders))[0].status).toBe(
+    "Diagnosed",
+  );
+  expect(
+    await db().select().from(s.operations).where(eq(s.operations.key, key)),
+  ).toHaveLength(0);
+  expect(
+    (await db().select().from(s.repairEvents)).map((e) => e.event),
+  ).toEqual(["Received", "Diagnosed"]);
+  const [replacement] = await db()
+    .insert(s.employees)
+    .values({ name: "Replacement tailor" })
+    .returning();
+  await act("assignRepair", {
+    id: order.id,
+    employeeId: replacement.id,
+    cost: "25.50",
+    notes: "Reassigned",
+  });
+  await act(
+    "repairStatus",
+    { id: order.id, status: "In Progress", notes: "Start" },
+    key,
+  );
+  await act("repairStatus", {
+    id: order.id,
+    status: "Awaiting Materials",
+    notes: "Waiting for zipper",
+  });
+  await db()
+    .update(s.employees)
+    .set({ active: false })
+    .where(eq(s.employees.id, replacement.id));
+  await expect(
+    act("repairStatus", {
+      id: order.id,
+      status: "In Progress",
+      notes: "Resume",
+    }),
+  ).rejects.toThrow("active employee");
+});
+
+it("preserves original product identity and material units referenced only by repairs", async () => {
+  const order = await create();
+  await act("requireRepairMaterial", {
+    id: order.id,
+    materialId: material,
+    quantity: "0.5",
+    notes: "Required repair fabric",
+  });
+  expect(await db().select().from(s.balances)).toHaveLength(0);
+  expect(await db().select().from(s.boms)).toHaveLength(0);
+  expect(await db().select().from(s.saleItems)).toHaveLength(0);
+  await expect(
+    db()
+      .update(s.materials)
+      .set({ unit: "Pieces" })
+      .where(eq(s.materials.id, material)),
+  ).rejects.toThrow();
+  await expect(
+    db()
+      .update(s.variants)
+      .set({ size: "XL", color: "Lime" })
+      .where(eq(s.variants.id, variant)),
+  ).rejects.toThrow();
+  expect((await db().select().from(s.materials))[0].unit).toBe("Meters");
+  expect((await db().select().from(s.variants))[0].size).toBe("L");
+});

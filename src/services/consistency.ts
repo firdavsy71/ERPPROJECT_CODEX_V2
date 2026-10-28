@@ -15,7 +15,7 @@ export async function checkConsistency() {
       ) q
       UNION ALL
       SELECT 'material_reservations',count(*)::int FROM inventory_balances b WHERE b.material_id IS NOT NULL
-        AND b.reserved<>(SELECT coalesce(sum(r.quantity),0) FROM production_material_reservations r JOIN manufacturing_orders o ON o.id=r.order_id WHERE r.balance_id=b.id AND o.status IN ('Planned','In Progress','Quality Control'))
+        AND b.reserved<>(SELECT coalesce(sum(r.quantity - (SELECT coalesce(sum(c.quantity),0) FROM outsourcing_custody c WHERE c.reservation_id=r.id)),0) FROM production_material_reservations r JOIN manufacturing_orders o ON o.id=r.order_id WHERE r.balance_id=b.id AND o.status IN ('Planned','In Progress','Quality Control'))
       UNION ALL
       SELECT 'shipment_counters',count(*)::int FROM sales_order_items l
         WHERE l.shipped<>(SELECT coalesce(sum(i.quantity),0) FROM shipment_items i WHERE i.sale_item_id=l.id)

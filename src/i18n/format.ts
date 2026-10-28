@@ -33,10 +33,13 @@ export function formatNumberExact(
 export function formatDateOnly(date: string, locale: Locale = "en") {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date))
     throw new Error("Expected an ISO calendar date");
+  const instant = new Date(`${date}T12:00:00Z`);
+  if (!Number.isFinite(instant.getTime()) || instant.toISOString().slice(0, 10) !== date)
+    throw new Error("Expected a valid ISO calendar date");
   return new Intl.DateTimeFormat(intlLocale[locale], {
     dateStyle: "medium",
     timeZone: "UTC",
-  }).format(new Date(`${date}T12:00:00Z`));
+  }).format(instant);
 }
 export function formatTimestamp(
   date: Date | string,

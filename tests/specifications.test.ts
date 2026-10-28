@@ -1,4 +1,4 @@
-import { beforeAll, beforeEach, afterAll, it, expect } from "vitest";
+import { beforeAll, beforeEach, afterAll, it, expect, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { migrate } from "drizzle-orm/pglite/migrator";
 import { drizzle } from "drizzle-orm/pglite";
@@ -17,6 +17,9 @@ import { execute } from "../src/services/operations";
 import { validDocument, approvedSpec } from "./spec-fixture";
 import type { Actor } from "../src/lib/permissions";
 import { garmentTypes, effectiveMeasurements } from "../src/lib/specification";
+const { currentActor } = vi.hoisted(() => ({ currentActor: vi.fn() }));
+vi.mock("../src/auth", () => ({ currentActor }));
+import { GET as downloadAttachment } from "../src/app/api/specifications/[id]/attachments/[attachmentId]/route";
 process.env.PGLITE_DATA_DIR = ":memory:";
 delete process.env.DATABASE_URL;
 it("supports six garment families and variant-specific consumption, measurements and instructions", async () => {
@@ -125,6 +128,40 @@ const input = () => ({
       measurements: [],
     },
   ],
+});
+it("protects specification attachment downloads by role and exact version ownership", async () => {
+  const id = await saveSpecification(actor, input());
+  const bytes = Buffer.from("%PDF-specification test attachment");
+  await uploadSpecificationAttachment(
+    actor,
+    id,
+    {
+      name: "drawing.pdf",
+      mime: "application/pdf",
+      data: bytes,
+    },
+    "Technical drawing",
+  );
+  const [attachment] = await db().select().from(s.specificationAttachments);
+  const request = (versionId = id) =>
+    downloadAttachment(
+      new Request("http://localhost/api/specifications/attachment"),
+      {
+        params: Promise.resolve({ id: versionId, attachmentId: attachment.id }),
+      },
+    );
+  currentActor.mockResolvedValue(null);
+  expect((await request()).status).toBe(401);
+  currentActor.mockResolvedValue({ ...actor, role: "viewer" });
+  expect((await request()).status).toBe(403);
+  for (const role of ["admin", "production", "sales", "inventory"]) {
+    currentActor.mockResolvedValue({ ...actor, role });
+    const response = await request();
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
+    expect(Buffer.from(await response.arrayBuffer())).toEqual(bytes);
+  }
+  expect((await request(randomUUID())).status).toBe(404);
 });
 it("rejects invalid fabric composition and unrelated variants", async () => {
   const v = input();

@@ -2,6 +2,7 @@
 import type { DocumentData } from "@/services/documents";
 import type { Locale } from "@/i18n/messages";
 import { messages } from "@/i18n/messages";
+import { documentLabel, documentTitle } from "@/i18n/documents";
 import {
   formatDateOnly,
   formatTimestamp,
@@ -20,20 +21,10 @@ export function BusinessDocument({
   id: string;
 }) {
   const t = messages[locale].invoice;
+  const dt = messages[locale].documents;
   const money = (v: string) =>
     d.currency ? formatMoneyExact(v, d.currency, locale) : v;
-  const label = (v: string) =>
-    d.kind === "invoice"
-      ? ((
-          {
-            "Due date": t.dueDate,
-            "Sales order": t.order,
-            Subtotal: t.subtotal,
-            Tax: t.tax,
-            Total: t.total,
-          } as Record<string, string>
-        )[v] ?? v)
-      : v;
+  const label = (v: string) => documentLabel(v, locale);
   return (
     <article className="business-document">
       <header className="document-header">
@@ -42,7 +33,7 @@ export function BusinessDocument({
             <img
               className="document-logo"
               src={`data:${d.company.logo.mime};base64,${d.company.logo.data}`}
-              alt="Company logo"
+              alt={dt.companyLogo}
             />
           )}
           <h2>{d.company.name}</h2>
@@ -67,7 +58,7 @@ export function BusinessDocument({
           )}
         </div>
         <div>
-          <h1>{d.kind === "invoice" ? t.title : d.title}</h1>
+          <h1>{documentTitle(d.kind, locale)}</h1>
           <p>{d.number}</p>
           <p>{d.status}</p>
           <p>
@@ -78,9 +69,7 @@ export function BusinessDocument({
       </header>
       {source === "live" && (
         <p className="document-warning">
-          Live preview: a historical snapshot was not captured. Names and
-          company details reflect current records and may differ from the
-          original transaction.
+          {dt.livePreview}
         </p>
       )}
       <p className="document-warning">{t.note}</p>
@@ -88,7 +77,7 @@ export function BusinessDocument({
         <section>
           <h2>
             {d.kind === "purchase-order" || d.kind === "material-receipt"
-              ? "Supplier"
+              ? dt.supplier
               : t.buyer}
           </h2>
           <p>{d.party.name}</p>
@@ -153,13 +142,13 @@ export function BusinessDocument({
       )}
       {d.sections.map((s, i) => (
         <section key={i}>
-          <h2>{s.title}</h2>
+          <h2>{label(s.title)}</h2>
           <p style={{ whiteSpace: "pre-wrap" }}>{s.content}</p>
         </section>
       ))}
       {d.attachments && d.attachments.length > 0 && (
         <section>
-          <h2>Technical attachments</h2>
+          <h2>{dt.attachments}</h2>
           {d.attachments.map((a) => (
             <div key={a.id}>
               <p>
@@ -189,13 +178,13 @@ export function BusinessDocument({
         </dl>
       )}
       <div className="document-signatures">
-        <span>Prepared by: __________________</span>
-        <span>Received / approved by: __________________</span>
+        <span>{dt.preparedBy}: __________________</span>
+        <span>{dt.receivedBy}: __________________</span>
       </div>
       <div className="actions no-print">
         <PrintButton />
         <a className="btn btn-outline" href={`/api/documents/${d.kind}/${id}`}>
-          Download PDF
+          {dt.downloadPdf}
         </a>
       </div>
     </article>

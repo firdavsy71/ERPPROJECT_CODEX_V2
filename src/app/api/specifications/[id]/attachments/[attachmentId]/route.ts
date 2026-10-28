@@ -1,4 +1,5 @@
 import { currentActor } from "@/auth";
+import { canReadModule } from "@/lib/permissions";
 import { db } from "@/db";
 import { specificationAttachments } from "@/db/schema";
 import { and, eq } from "drizzle-orm";
@@ -7,8 +8,10 @@ export async function GET(
   _: Request,
   { params }: { params: Promise<{ id: string; attachmentId: string }> },
 ) {
-  if (!(await currentActor()))
-    return new Response("Unauthorized", { status: 401 });
+  const actor = await currentActor();
+  if (!actor) return new Response("Unauthorized", { status: 401 });
+  if (!canReadModule(actor.role, "products"))
+    return new Response("Forbidden", { status: 403 });
   const { id, attachmentId } = await params;
   if (
     !z.uuid().safeParse(id).success ||

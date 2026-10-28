@@ -5,13 +5,14 @@ import { z } from "zod";
 import { currentActor } from "@/auth";
 import { db } from "@/db";
 import * as s from "@/db/schema";
-import { can } from "@/lib/permissions";
+import { can, canReadModule } from "@/lib/permissions";
 import { ActionForm } from "@/components/forms";
 import { DataTable } from "@/components/data-table";
 
 export default async function FabricRollDetail({ params }: { params: Promise<{ id: string }> }) {
   const actor = await currentActor();
   if (!actor) redirect("/login");
+  if (!canReadModule(actor.role, "inventory")) notFound();
   const { id } = await params;
   if (!z.uuid().safeParse(id).success) notFound();
   const [roll] = await db().select().from(s.fabricRolls).where(eq(s.fabricRolls.id, id));
