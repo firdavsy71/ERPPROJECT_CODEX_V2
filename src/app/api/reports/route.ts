@@ -3,14 +3,26 @@ import { data } from "@/services/queries";
 import Decimal from "decimal.js";
 import { currentLocale } from "@/i18n/server";
 import { messages } from "@/i18n/messages";
-import { formatTimestamp } from "@/i18n/format";
+import { businessDate, formatTimestamp } from "@/i18n/format";
+import { z } from "zod";
+import { and, eq, sql } from "drizzle-orm";
 import { canExportReport } from "@/lib/permissions";
 import { db } from "@/db";
-import { movements } from "@/db/schema";
+import { balances, movements } from "@/db/schema";
+const calendarDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine(value => {
+  const date = new Date(`${value}T12:00:00Z`);
+  return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
+}, "Expected a valid ISO calendar date");
+const filtersSchema = z.object({
+  from: calendarDate.optional(),
+  to: calendarDate.optional(),
+  warehouseId: z.uuid().optional(),
+}).refine(v => !v.from || !v.to || v.from <= v.to, "Start date must not follow end date");
 export async function GET(request: Request) {
   const actor = await currentActor();
   if (!actor) return new Response("Unauthorized", { status: 401 });
-  const name = new URL(request.url).searchParams.get("report") ?? "";
+  const params = new URL(request.url).searchParams;
+  const name = params.get("report") ?? "";
   if (
     ![
       "sales",
@@ -25,13 +37,28 @@ export async function GET(request: Request) {
     return new Response("Unknown report", { status: 400 });
   if (!canExportReport(actor.role, name))
     return new Response("Forbidden", { status: 403 });
+  const parsed = filtersSchema.safeParse(Object.fromEntries(
+    ["from", "to", "warehouseId"].filter(key => params.has(key) && params.get(key) !== "").map(key => [key, params.get(key)]),
+  ));
+  if (!parsed.success) return new Response("Invalid report filters", { status: 400 });
+  const filters = parsed.data;
+  if ((filters.from || filters.to) && ["inventory", "materials"].includes(name))
+    return new Response("Stock reports show current balances; date filters require a movement report.", { status: 400 });
+  if (filters.warehouseId && !["inventory", "materials", "movements"].includes(name))
+    return new Response("This report does not support warehouse filtering.", { status: 400 });
   const d = await data();
+  if (filters.warehouseId && !d.warehouses.some(w => w.id === filters.warehouseId))
+    return new Response("Warehouse not found", { status: 404 });
   const locale = await currentLocale();
   const labels = messages[locale].reports;
   const timezone = d.settings[0]?.timezone ?? "Asia/Tashkent";
+  const inPeriod = (row: { createdAt: Date }) => {
+    const date = businessDate(row.createdAt, timezone);
+    return (!filters.from || date >= filters.from) && (!filters.to || date <= filters.to);
+  };
   const rows =
     name === "invoices"
-      ? d.invoices.map((i) => {
+      ? d.invoices.filter(inPeriod).map((i) => {
           const credited = d.returnCredits
               .filter((c) => c.invoiceId === i.id)
               .reduce((n, c) => n.add(c.amount), new Decimal(0)),
@@ -56,8 +83,16 @@ export async function GET(request: Request) {
           };
         })
       : name === "movements"
-        ? await db().select().from(movements)
-        : d[name === "inventory" ? "balances" : (name as "sales")];
+        ? await db().select().from(movements).where(and(
+          filters.warehouseId ? sql`${movements.balanceId} in (select ${balances.id} from ${balances} where ${eq(balances.warehouseId, filters.warehouseId)})` : undefined,
+          filters.from ? sql`(${movements.createdAt} at time zone ${timezone})::date >= ${filters.from}::date` : undefined,
+          filters.to ? sql`(${movements.createdAt} at time zone ${timezone})::date <= ${filters.to}::date` : undefined,
+        )).orderBy(movements.createdAt, movements.id)
+        : name === "inventory"
+          ? d.balances.filter(b => !filters.warehouseId || b.warehouseId === filters.warehouseId)
+          : name === "materials"
+            ? d.materials.filter(m => !filters.warehouseId || d.balances.some(b => b.warehouseId === filters.warehouseId && b.materialId === m.id))
+            : d[name as "sales" | "manufacturing" | "purchases"].filter(inPeriod);
   const keys = Object.keys(rows[0] ?? {});
   const escape = (v: unknown) => {
     let s = String(v ?? "");
@@ -94,6 +129,8 @@ export async function GET(request: Request) {
       "Content-Type": "text/csv; charset=utf-8",
       "Content-Disposition": `attachment; filename="${name}.csv"`,
       "Cache-Control": "no-store",
+      "X-Report-Time-Zone": timezone,
+      "X-Report-Basis": ["inventory", "materials"].includes(name) ? "current-state" : "created-at",
     },
   });
 }

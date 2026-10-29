@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { ReportFilters } from "./report-filters";
 import { db } from "@/db";
 import { specifications, specificationVariants } from "@/db/schema";
 import { brandingVersions } from "@/db/schema";
@@ -271,7 +272,7 @@ export async function ModuleView({
                   </div>
                 ))}
             </dl>
-            {module === "materials" && <section><div className="section-heading"><div><p className="eyebrow">STORAGE / AVAILABILITY</p><h3>Stock by warehouse</h3></div></div><DataTable rows={d.balances.filter(balance => balance.materialId === r.id).map(balance=>({id:balance.id,warehouse:d.warehouses.find(w=>w.id===balance.warehouseId)?.name,onHand:balance.onHand,reserved:balance.reserved,available:new Decimal(balance.onHand).minus(balance.reserved).toFixed(4)}))} columns={columns("warehouse|Warehouse","onHand|On hand","reserved|Reserved","available|Available")} /><h3>Material movements</h3><p className="muted">Latest journal entries in the current workspace view.</p><DataTable rows={d.movements.filter(movement=>d.balances.some(balance=>balance.id===movement.balanceId && balance.materialId===r.id)).map(movement=>({...movement,createdAt:movement.createdAt.toISOString()}))} columns={columns("createdAt|Date","reason|Operation","source|Source","quantity|Stock change","reservedDelta|Reserved change")} /></section>}
+            {module === "materials" && <section><div className="section-heading"><div><p className="eyebrow">STORAGE / AVAILABILITY</p><h3>Stock by warehouse</h3></div></div><DataTable rows={d.balances.filter(balance => balance.materialId === r.id).map(balance=>({id:balance.id,warehouse:d.warehouses.find(w=>w.id===balance.warehouseId)?.name,onHand:balance.onHand,reserved:balance.reserved,held:balance.held,available:new Decimal(balance.onHand).minus(balance.reserved).minus(balance.held).toFixed(4)}))} columns={columns("warehouse|Warehouse","onHand|On hand","reserved|Reserved","held|Incoming QC hold","available|Available")} /><h3>Material movements</h3><p className="muted">Latest journal entries in the current workspace view.</p><DataTable rows={d.movements.filter(movement=>d.balances.some(balance=>balance.id===movement.balanceId && balance.materialId===r.id)).map(movement=>({...movement,createdAt:movement.createdAt.toISOString()}))} columns={columns("createdAt|Date","reason|Operation","source|Source","quantity|Stock change","reservedDelta|Reserved change","heldDelta|QC hold change")} /></section>}
             {module === "products" && (
               <>
                 {can(actor.role, "compliance.read") && (
@@ -985,7 +986,7 @@ export async function ModuleView({
                 const needed = new Decimal(i.quantity).mul(r.quantity);
                 const available = new Decimal(b?.onHand ?? 0).minus(
                   b?.reserved ?? 0,
-                );
+                ).minus(b?.held ?? 0);
                 return {
                   id: i.id,
                   material: d.materials.find((m) => m.id === i.materialId)
@@ -1017,13 +1018,14 @@ export async function ModuleView({
         ? variantLabel(b.variantId)
         : d.materials.find((m) => m.id === b.materialId)?.name,
       kind: b.variantId ? "Finished goods" : "Raw material",
-      available: new Decimal(b.onHand).minus(b.reserved).toFixed(4),
+      available: new Decimal(b.onHand).minus(b.reserved).minus(b.held).toFixed(4),
     }));
     cols = columns(
       "item|Stock item",
       "kind|Type",
       "onHand|On hand",
       "reserved|Reserved",
+      "held|Incoming QC hold",
       "available|Available",
     );
     if (editable)
@@ -1365,6 +1367,7 @@ export async function ModuleView({
             </p>
           </div>
         </div>
+        <ReportFilters reports={["sales","manufacturing","materials","inventory","purchases","invoices","movements"].filter(m=>canExportReport(actor.role,m)).map(m=>({value:m,label:dictionary.nav[m as keyof typeof dictionary.nav] ?? m}))} warehouses={d.warehouses} />
         <div className="report-grid">
           {[
             "sales",

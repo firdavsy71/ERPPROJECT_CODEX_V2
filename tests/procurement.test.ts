@@ -14,6 +14,7 @@ import {
   receiptLineCost,
 } from "../src/services/procurement";
 import type { Actor } from "../src/lib/permissions";
+import { checkConsistency } from "../src/services/consistency";
 process.env.PGLITE_DATA_DIR = ":memory:";
 delete process.env.DATABASE_URL;
 let actor: Actor, supplier: string, material: string;
@@ -109,7 +110,8 @@ it("records original supplier prices, inspection, incidents and landed costs wit
         .from(s.balances)
         .where(eq(s.balances.materialId, material))
     )[0].onHand,
-  ).toBe("90.0000");
+  ).toBe("100.0000");
+  expect((await db().select().from(s.balances))[0].held).toBe("10.0000");
   expect(await db().select().from(s.supplierIncidents)).toHaveLength(1);
   expect(
     inspectionTotals(item, await db().select().from(s.procurementInspections)),
@@ -202,7 +204,7 @@ it("rejects only the physical fabric roll from the received batch", async () => 
     notes: "Damaged end",
   });
   expect((await db().select().from(s.fabricRolls))[0].remainingLength).toBe(
-    "95.0000",
+    "100.0000",
   );
   expect(
     (
@@ -211,7 +213,10 @@ it("rejects only the physical fabric roll from the received batch", async () => 
         .from(s.balances)
         .where(eq(s.balances.materialId, material))
     )[0].onHand,
-  ).toBe("95.0000");
+  ).toBe("100.0000");
+  expect((await db().select().from(s.fabricRolls))[0].heldLength).toBe("5.0000");
+  await act("disposeProcurement",{receiptItemId:item.id,rollId:roll.id,quantity:"5",kind:"Supplier Return",reference:"RETURN-R1",notes:"Documented return of damaged fabric"});
+  expect((await db().select().from(s.fabricRolls))[0].remainingLength).toBe("95.0000");
 });
 it("does not assert unverified prices for an order placed before snapshot tracking", async () => {
   const [order]=await db().insert(s.purchases).values({number:"PO-OLD-OPEN",supplierId:supplier,status:"Ordered",currency:"UZS",expectedDate:"2099-01-01"}).returning();
@@ -225,10 +230,12 @@ it("captures receipt movements from a previous application version during rollou
   const [order]=await db().insert(s.purchases).values({number:"PO-OLD-DEPLOY",supplierId:supplier,status:"Ordered",currency:"UZS"}).returning();
   const [line]=await db().insert(s.purchaseItems).values({orderId:order.id,materialId:material,quantity:"5",price:"20"}).returning();
   const [warehouse]=await db().select().from(s.warehouses);
-  const [balance]=await db().insert(s.balances).values({warehouseId:warehouse.id,materialId:material,onHand:"5",reserved:"0"}).returning();
   const key=randomUUID();
   const [receipt]=await db().insert(s.receipts).values({orderId:order.id,operationKey:key}).returning();
-  await db().insert(s.movements).values({balanceId:balance.id,quantity:"5",reservedDelta:"0",reason:"Purchase receipt",source:order.number,operationKey:key+":"+line.id,createdBy:actor.id});
+  await db().transaction(async tx=>{
+    const [balance]=await tx.insert(s.balances).values({warehouseId:warehouse.id,materialId:material,onHand:"5",reserved:"0"}).returning();
+    await tx.insert(s.movements).values({balanceId:balance.id,quantity:"5",reservedDelta:"0",reason:"Purchase receipt",source:order.number,operationKey:key+":"+line.id,createdBy:actor.id});
+  });
   const [item]=await db().select().from(s.purchaseReceiptItems);
   expect(item).toMatchObject({receiptId:receipt.id,purchaseItemId:line.id,unitPrice:null,provenance:"Legacy order"});
 });
@@ -242,6 +249,37 @@ it("allocates costs by received value with no lost cents", () => {
   expect(() =>
     allocateByValue("1", [{ id: "a", quantity: "1", unitPrice: "0" }]),
   ).toThrow("Positive known");
+});
+it("holds every new receipt until QC acceptance and keeps rejects blocked until disposition",async()=>{
+  const {item}=await purchase();
+  expect((await db().select().from(s.balances))[0]).toMatchObject({onHand:"100.0000",held:"100.0000",reserved:"0.0000"});
+  await expect(act("adjust",{kind:"material",itemId:material,delta:"-1",reason:"Attempt held stock removal"})).rejects.toThrow("Insufficient");
+  await act("inspectProcurement",{receiptItemId:item.id,accepted:"30",rejected:"20",notes:"Partial receiving inspection"});
+  await expect(act("adjust",{kind:"material",itemId:material,delta:"-31",reason:"Over available stock"})).rejects.toThrow("Insufficient");
+  await act("adjust",{kind:"material",itemId:material,delta:"-30",reason:"Issue accepted material"});
+  await act("inspectProcurement",{receiptItemId:item.id,accepted:"50",rejected:"0",notes:"Remainder inspected"});
+  const disposition={receiptItemId:item.id,quantity:"20",kind:"Supplier Return",reference:"SUPPLIER-RETURN-20",notes:"Returned under signed document"},key=randomUUID();
+  await expect(execute({...actor,role:"sales"},"disposeProcurement",disposition,randomUUID())).rejects.toThrow("permission");
+  await act("disposeProcurement",disposition,key);
+  await act("disposeProcurement",disposition,key);
+  await expect(act("disposeProcurement",disposition)).rejects.toThrow();
+  expect((await db().select().from(s.balances))[0]).toMatchObject({onHand:"50.0000",held:"0.0000"});
+  expect(await db().select().from(s.procurementDispositions)).toHaveLength(1);
+  expect((await checkConsistency()).filter(c=>c.violations>0)).toEqual([]);
+});
+it("retains rejected physical roll coordinates while accepted sections are consumed",async()=>{
+  const {item}=await purchase(true);
+  const [roll]=await db().select().from(s.fabricRolls);
+  await act("inspectProcurement",{receiptItemId:item.id,rollId:roll.id,accepted:"20",rejected:"10",notes:"First30m inspected;10m rejected"});
+  await expect(act("adjustRoll",{rollId:roll.id,delta:"-21",reason:"Attempt excess available roll"})).rejects.toThrow();
+  await expect(act("damageRoll",{rollId:roll.id,start:"20",end:"30",reason:"Attempt removing held rejected section"})).rejects.toThrow();
+  await act("inspectProcurement",{receiptItemId:item.id,rollId:roll.id,accepted:"70",rejected:"0",notes:"Remaining70m accepted"});
+  expect((await db().select().from(s.fabricRolls))[0]).toMatchObject({heldLength:"10.0000",heldSegments:[{start:"20.0000",end:"30.0000"}],uninspectedSegments:[]});
+  await act("adjustRoll",{rollId:roll.id,delta:"-90",reason:"Use all accepted fabric"});
+  expect((await db().select().from(s.fabricRolls))[0].usableSegments).toEqual([{start:"20.0000",end:"30.0000"}]);
+  await act("disposeProcurement",{receiptItemId:item.id,rollId:roll.id,quantity:"10",kind:"Scrap",reference:"SCRAP-REJECTED-SECTION",notes:"Approved scrap document"});
+  expect((await db().select().from(s.fabricRolls))[0]).toMatchObject({remainingLength:"0.0000",heldLength:"0.0000",heldSegments:[],usableSegments:[]});
+  expect((await checkConsistency()).filter(c=>c.violations>0)).toEqual([]);
 });
 
 it("recovers old receipt quantities without inventing historical prices or timing", async () => {

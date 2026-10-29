@@ -8,6 +8,29 @@ import { damageSegments, takeSegments, type FabricSegment } from "@/lib/fabric-s
 type Tx = Parameters<Parameters<ReturnType<typeof db>["transaction"]>[0]>[0];
 const n = (v: Decimal.Value) => new Decimal(v);
 const fixed = (v: Decimal.Value) => n(v).toFixed(4);
+function withoutSegments(source: FabricSegment[], removed: FabricSegment[]) {
+  return removed.reduce((current, segment) => damageSegments(current,segment.start,segment.end).remaining, source);
+}
+export function takeAvailableFabric(roll: typeof s.fabricRolls.$inferSelect, quantity: string, fromEnd=false) {
+  const available=withoutSegments(roll.usableSegments,roll.heldSegments);
+  const cut=takeSegments(available,quantity,fromEnd);
+  return {taken:cut.taken,remaining:withoutSegments(roll.usableSegments,cut.taken)};
+}
+/** QC removes inspected coordinates from pending inspection; rejected sections remain held. */
+export async function releaseQualityHold(tx: Tx, c: {roll:typeof s.fabricRolls.$inferSelect;quantity:string;rejected?:string;dispose:boolean}) {
+  const accepted=n(c.quantity), rejected=n(c.rejected??0),roll=c.roll;
+  if(c.dispose) {
+    const rejectedSections=withoutSegments(roll.heldSegments,roll.uninspectedSegments);
+    const cut=takeSegments(rejectedSections,c.quantity);
+    await tx.update(s.fabricRolls).set({heldLength:fixed(n(roll.heldLength).minus(accepted)),heldSegments:withoutSegments(roll.heldSegments,cut.taken),remainingLength:fixed(n(roll.remainingLength).minus(accepted)),usableSegments:withoutSegments(roll.usableSegments,cut.taken)}).where(eq(s.fabricRolls.id,roll.id));
+    return cut.taken;
+  }
+  if(accepted.add(rejected).isZero()) return [];
+  const inspected=takeSegments(roll.uninspectedSegments,fixed(accepted.add(rejected)));
+  const acceptedSections=accepted.gt(0)?takeSegments(inspected.taken,c.quantity).taken:[];
+  await tx.update(s.fabricRolls).set({heldLength:fixed(n(roll.heldLength).minus(accepted)),heldSegments:withoutSegments(roll.heldSegments,acceptedSections),uninspectedSegments:inspected.remaining}).where(eq(s.fabricRolls.id,roll.id));
+  return acceptedSections;
+}
 const positive = z.string().regex(/^\d{1,12}(\.\d{1,4})?$/).refine((v) => n(v).gt(0), "Must be positive");
 export const rollInputSchema = z.object({
   rollNumber: z.string().trim().min(1).max(100),
@@ -42,6 +65,7 @@ type RollCreation = {
   purchaseReceiptId?: string;
   purchaseOrderItemId?: string;
   supplierId?: string;
+  qualityHold?: boolean;
 };
 
 async function createRolls(tx: Tx, c: RollCreation, opening: boolean) {
@@ -56,6 +80,9 @@ async function createRolls(tx: Tx, c: RollCreation, opening: boolean) {
       color: input.color, composition: input.composition, widthCm: input.widthCm,
       receivedLength: input.receivedLength, physicalLength: input.receivedLength,
       remainingLength: input.receivedLength, storageLocation: input.storageLocation,
+      heldLength: c.qualityHold ? input.receivedLength : "0",
+      heldSegments: c.qualityHold ? [{start:"0.0000",end:fixed(input.receivedLength)}] : [],
+      uninspectedSegments: c.qualityHold ? [{start:"0.0000",end:fixed(input.receivedLength)}] : [],
       notes: input.notes || null, createdBy: c.actorId,
       usableSegments: [{ start: "0.0000", end: fixed(input.receivedLength) }],
     }).returning();
@@ -71,7 +98,7 @@ export async function activateRollTracking(tx: Tx, c: RollCreation) {
   if (c.balance.rollTracked || !c.balance.materialId) throw new Error("This balance cannot be enabled for roll tracking.");
   const [material] = await tx.select().from(s.materials).where(eq(s.materials.id, c.balance.materialId));
   if (material?.unit !== "Meters") throw new Error("Only materials measured in meters can be tracked by roll.");
-  if (!n(c.balance.reserved).isZero()) throw new Error("Release existing material reservations before enabling roll tracking.");
+  if (!n(c.balance.reserved).isZero() || !n(c.balance.held).isZero()) throw new Error("Release existing material reservations and complete incoming quality holds before enabling roll tracking.");
   if (!c.rolls.reduce((sum, r) => sum.add(r.receivedLength), n(0)).eq(c.balance.onHand))
     throw new Error("Opening roll lengths must add up exactly to the existing on-hand balance.");
   await tx.update(s.balances).set({ rollTracked: true }).where(eq(s.balances.id, c.balance.id));
@@ -97,8 +124,8 @@ export async function adjustRoll(tx: Tx, c: RollChange & { delta: string }) {
   const { roll, balance } = await getRollForChange(tx, c.rollId);
   const delta = n(c.delta);
   if (delta.isZero()) throw new Error("Adjustment cannot be zero.");
-  if (delta.isNegative() && delta.abs().gt(n(roll.remainingLength).minus(roll.reservedLength))) throw new Error("Cannot adjust away reserved fabric.");
-  const cut = delta.isNegative() ? takeSegments(roll.usableSegments as FabricSegment[], fixed(delta.abs()), true) : {
+  if (delta.isNegative() && delta.abs().gt(n(roll.remainingLength).minus(roll.reservedLength).minus(roll.heldLength))) throw new Error("Cannot adjust away reserved or held fabric.");
+  const cut = delta.isNegative() ? takeAvailableFabric(roll, fixed(delta.abs()), true) : {
     remaining: [...roll.usableSegments, { start: fixed(roll.physicalLength), end: fixed(n(roll.physicalLength).add(delta)) }],
     taken: [{ start: fixed(roll.physicalLength), end: fixed(n(roll.physicalLength).add(delta)) }],
   };
@@ -108,8 +135,9 @@ export async function adjustRoll(tx: Tx, c: RollChange & { delta: string }) {
 }
 export async function damageRoll(tx: Tx, c: RollChange & { start: string; end: string }) {
   const { roll, balance } = await getRollForChange(tx, c.rollId);
+  if(roll.heldSegments.some(x => n(x.start).lt(c.end) && n(x.end).gt(c.start))) throw new Error("Cannot damage fabric under incoming quality hold.");
   const cut = damageSegments(roll.usableSegments as FabricSegment[], c.start, c.end);
-  if (n(cut.quantity).gt(n(roll.remainingLength).minus(roll.reservedLength))) throw new Error("Cannot damage fabric reserved for manufacturing; release the reservation first.");
+  if (n(cut.quantity).gt(n(roll.remainingLength).minus(roll.reservedLength).minus(roll.heldLength))) throw new Error("Cannot damage fabric reserved or held for quality control.");
   const movement = await c.applyMovement(balance, fixed(n(cut.quantity).neg()));
   await tx.update(s.fabricRolls).set({ remainingLength: fixed(n(roll.remainingLength).minus(cut.quantity)), usableSegments: cut.remaining }).where(eq(s.fabricRolls.id, roll.id));
   const [event] = await tx.insert(s.fabricRollMovements).values({ rollId: roll.id, inventoryMovementId: movement.id, quantity: fixed(n(cut.quantity).neg()), reservedDelta: "0", reason: c.reason, source: "fabric defect", operationKey: `${c.operationKey}:roll`, createdBy: c.actorId, segments: cut.taken }).returning();
@@ -136,7 +164,7 @@ export async function planRolls(tx: Tx, c: Context & { quantity: string; allocat
     let remaining = target;
     allocations = [];
     for (const roll of [...rolls].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || a.id.localeCompare(b.id))) {
-      const available = n(roll.remainingLength).minus(roll.reservedLength);
+      const available = n(roll.remainingLength).minus(roll.reservedLength).minus(roll.heldLength);
       const amount = Decimal.min(available, remaining);
       if (amount.gt(0)) allocations.push({ rollId: roll.id, quantity: fixed(amount) });
       remaining = remaining.minus(amount);
@@ -149,7 +177,7 @@ export async function planRolls(tx: Tx, c: Context & { quantity: string; allocat
   for (const allocation of allocations) {
     const roll = rolls.find((r) => r.id === allocation.rollId);
     const amount = n(allocation.quantity);
-    if (!roll || amount.lte(0) || amount.gt(n(roll.remainingLength).minus(roll.reservedLength)))
+    if (!roll || amount.lte(0) || amount.gt(n(roll.remainingLength).minus(roll.reservedLength).minus(roll.heldLength)))
       throw new Error("A selected roll is unavailable or has insufficient unreserved length.");
     await tx.update(s.fabricRolls).set({ reservedLength: fixed(n(roll.reservedLength).add(amount)) }).where(eq(s.fabricRolls.id, roll.id));
     await tx.insert(s.fabricRollReservations).values({ rollId: roll.id, manufacturingOrderId: c.orderId, materialReservationId: c.reservationId, quantity: fixed(amount) });
@@ -178,13 +206,13 @@ export async function consumeRolls(tx: Tx, c: Context & { reservedQuantity: stri
   const actual = new Map(consumption.map((a) => [a.rollId, n(a.quantity)]));
   for (const [id, amount] of actual) {
     const roll = rolls.find((r) => r.id === id);
-    if (!roll || amount.lte(0) || amount.gt(n(roll.remainingLength).minus(roll.reservedLength).add(owned.get(id) ?? 0)))
+    if (!roll || amount.lte(0) || amount.gt(n(roll.remainingLength).minus(roll.reservedLength).minus(roll.heldLength).add(owned.get(id) ?? 0)))
       throw new Error("Selected roll consumption exceeds fabric available to this order.");
   }
   for (const roll of rolls) {
     const allocation = owned.get(roll.id) ?? n(0), amount = actual.get(roll.id) ?? n(0);
     if (allocation.isZero() && amount.isZero()) continue;
-    const cut = amount.gt(0) ? takeSegments(roll.usableSegments as FabricSegment[], fixed(amount)) : { remaining: roll.usableSegments as FabricSegment[], taken: [] };
+    const cut = amount.gt(0) ? takeAvailableFabric(roll, fixed(amount)) : { remaining: roll.usableSegments as FabricSegment[], taken: [] };
     await tx.update(s.fabricRolls).set({ remainingLength: fixed(n(roll.remainingLength).minus(amount)), reservedLength: fixed(n(roll.reservedLength).minus(allocation)), usableSegments: cut.remaining }).where(eq(s.fabricRolls.id, roll.id));
     if (allocation.gt(0)) {
       const used = Decimal.min(amount, allocation);

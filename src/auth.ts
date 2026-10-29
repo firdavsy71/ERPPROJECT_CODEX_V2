@@ -2,13 +2,27 @@ import NextAuth from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import { compare } from "bcryptjs";
 import { eq, sql } from "drizzle-orm";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import { db } from "@/db";
 import { users, loginAttempts } from "@/db/schema";
 import type { Actor, Role } from "@/lib/permissions";
 export const { handlers, auth, signIn, signOut } = NextAuth({
   trustHost: true,
+  // Auth.js defaults may include nested adapter errors, queries and provider data.
+  // Emit bounded categories only; configuration and cookie failures remain diagnosable.
+  logger: {
+    error(error) {
+      const known = ["JWTSessionError", "SessionTokenError", "MissingSecret", "UntrustedHost", "CallbackRouteError", "CredentialsSignin", "AccessDenied", "AdapterError"];
+      const type = "type" in error && typeof error.type === "string" ? error.type : "";
+      const category = known.includes(type) ? type : "OtherAuthError";
+      console.error(JSON.stringify({event:"erp.auth",action:"auth",requestId:randomUUID(),category}));
+    },
+    warn() {
+      console.warn(JSON.stringify({event:"erp.auth",action:"auth",requestId:randomUUID(),category:"configuration_warning"}));
+    },
+    debug() {},
+  },
   session: { strategy: "jwt", maxAge: 8 * 60 * 60 },
   pages: { signIn: "/login" },
   providers: [

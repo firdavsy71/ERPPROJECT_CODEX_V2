@@ -1,21 +1,17 @@
 import { config } from "dotenv";
+import { readMigrationFiles } from "drizzle-orm/migrator";
+import { applyMigrations } from "./migration-runner";
 config({ path: ".env.local", quiet: true });
 config({ quiet: true });
 const { db, localClient, neonClient } = await import("../src/db");
 const client = localClient();
-if (client) {
-  const { migrate } = await import("drizzle-orm/pglite/migrator");
-  const { drizzle } = await import("drizzle-orm/pglite");
-  await migrate(drizzle(client), { migrationsFolder: "drizzle" });
-  await client.close();
-} else if (neonClient()) {
-  const { migrate } = await import("drizzle-orm/neon-serverless/migrator");
-  const { drizzle } = await import("drizzle-orm/neon-serverless");
-  await migrate(drizzle(neonClient()!), { migrationsFolder: "drizzle" });
-  await neonClient()!.end();
-} else {
-  const { migrate } = await import("drizzle-orm/postgres-js/migrator");
-  await migrate(db(), { migrationsFolder: "drizzle" });
+try {
+  await applyMigrations(db(), readMigrationFiles({ migrationsFolder: "drizzle" }), {
+    advisoryLock: !client,
+  });
+  console.log("Migrations applied.");
+} finally {
+  await client?.close();
+  await neonClient()?.end();
 }
-console.log("Migrations applied.");
 process.exit(0);

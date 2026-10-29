@@ -5,8 +5,7 @@ import { z } from "zod";
 import { db } from "@/db";
 import * as s from "@/db/schema";
 import type { Actor } from "@/lib/permissions";
-import { planRolls, releaseRolls, receiveRolls } from "@/services/fabric-rolls";
-import { takeSegments } from "@/lib/fabric-segments";
+import { planRolls, releaseRolls, receiveRolls, takeAvailableFabric } from "@/services/fabric-rolls";
 type Tx = Parameters<Parameters<ReturnType<typeof db>["transaction"]>[0]>[0];
 type Balance = typeof s.balances.$inferSelect;
 type Context = {
@@ -315,7 +314,7 @@ export async function outsourcingAction(
         throw new Error(
           "Choose sufficient fabric on a roll allocated to this manufacturing order",
         );
-      const cut = takeSegments(roll.usableSegments, v.quantity);
+      const cut = takeAvailableFabric(roll, v.quantity);
       segments = cut.taken;
       await tx
         .update(s.fabricRolls)

@@ -36,6 +36,7 @@ import {
   activateRollTracking,
   adjustRoll,
   damageRoll,
+  releaseQualityHold,
 } from "@/services/fabric-rolls";
 import {
   checkBrandingBeforeConfirmation,
@@ -53,6 +54,7 @@ export function lineTotal(
   return discountedLineTotal(q, p, discount);
 }
 export const actions = [
+  "disposeProcurement",
   "inspectProcurement", "recordSupplierIncident", "recordProcurementExpense",
   "createSafetyStandard", "editSafetyStandard", "archiveSafetyStandard", "createCertification", "editCertification", "reviseCertification", "approveCertification", "revokeCertification",
   "createRepair", "assignRepair", "repairStatus", "requireRepairMaterial", "consumeRepairMaterial", "recordRepairLabor",
@@ -129,6 +131,7 @@ export const actions = [
 ] as const;
 export type BusinessAction = (typeof actions)[number];
 const resources: Record<BusinessAction, string> = {
+  disposeProcurement: "purchases",
   inspectProcurement: "purchases",
   recordSupplierIncident: "purchases",
   recordProcurementExpense: "procurement.cost",
@@ -260,16 +263,17 @@ async function move(
   source: string,
   key: string,
   actor: Actor,
+  h: Decimal.Value = 0,
 ) {
   const onHand = num(b.onHand).add(q),
-    reserved = num(b.reserved).add(r);
-  if (onHand.isNegative() || reserved.isNegative() || reserved.gt(onHand))
+    reserved = num(b.reserved).add(r), held = num(b.held).add(h);
+  if (onHand.isNegative() || reserved.isNegative() || held.isNegative() || reserved.add(held).gt(onHand))
     throw new Error(
       "Insufficient available stock. Receive materials or finished goods before proceeding.",
     );
   await tx
     .update(s.balances)
-    .set({ onHand: onHand.toFixed(4), reserved: reserved.toFixed(4) })
+    .set({ onHand: onHand.toFixed(4), reserved: reserved.toFixed(4), held: held.toFixed(4) })
     .where(eq(s.balances.id, b.id));
   const [movement] = await tx
     .insert(s.movements)
@@ -277,6 +281,7 @@ async function move(
       balanceId: b.id,
       quantity: num(q).toFixed(4),
       reservedDelta: num(r).toFixed(4),
+      heldDelta: num(h).toFixed(4),
       reason,
       source,
       operationKey: key,
@@ -328,9 +333,26 @@ export async function execute(
     await tx
       .insert(s.operations)
       .values({ key, fingerprint, actorId: actor.id });
-    if (["inspectProcurement","recordSupplierIncident","recordProcurementExpense"].includes(action)) {
+    if (["inspectProcurement","disposeProcurement","recordSupplierIncident","recordProcurementExpense"].includes(action)) {
       await procurementAction(tx,action,input,{
         actorId:actor.id,
+        quality: async (item, accepted, rollId, dispose, rejected) => {
+          const [original] = await tx.select().from(s.movements).where(eq(s.movements.id,item.movementId));
+          const [b] = await tx.select().from(s.balances).where(eq(s.balances.id,original.balanceId)).for("update");
+          const amount=num(accepted);
+          let qualitySegments: {start:string;end:string}[]=[];
+          if (b.rollTracked) {
+            if(!rollId) throw new Error("Select the received fabric roll for incoming quality control.");
+            const [roll]=await tx.select().from(s.fabricRolls).where(eq(s.fabricRolls.id,rollId)).for("update");
+            if(!roll || roll.balanceId!==b.id || roll.purchaseReceiptId!==item.receiptId || roll.purchaseOrderItemId!==item.purchaseItemId) throw new Error("The roll must belong to this receipt line.");
+            if(amount.gt(roll.heldLength)) throw new Error("Quantity exceeds this roll's held length.");
+            qualitySegments=await releaseQualityHold(tx,{roll,quantity:amount.toFixed(4),rejected,dispose:Boolean(dispose)});
+          } else if(rollId) throw new Error("This material is not roll tracked.");
+          if(amount.isZero()) return null;
+          const m=await move(tx,b,dispose?amount.neg():0,0,dispose?"Rejected procurement disposition":"Incoming QC acceptance",item.id,key+":quality",actor,amount.neg());
+          if(dispose && rollId) await tx.insert(s.fabricRollMovements).values({rollId,inventoryMovementId:m.id,quantity:amount.neg().toFixed(4),reservedDelta:"0",reason:"Rejected procurement disposition",source:item.id,operationKey:key+":quality-roll",createdBy:actor.id,segments:qualitySegments});
+          return m.id;
+        },
         reject:async (item, quantity, rollId)=>{
           const b=await balance(tx,warehouse.id,item.materialId,"material");
           if(b.rollTracked) {
@@ -758,6 +780,7 @@ export async function execute(
           po.number,
           `${key}:${l.id}`,
           actor,
+          l.quantity,
         );
         await tx.insert(s.purchaseReceiptItems).values({
           receiptId:receipt.id,purchaseItemId:line.id,materialId:line.materialId,movementId:movement.id,
@@ -774,6 +797,7 @@ export async function execute(
             purchaseReceiptId: receipt.id,
             purchaseOrderItemId: line.id,
             supplierId: po.supplierId,
+            qualityHold: true,
           });
         else if (l.rolls?.length)
           throw new Error(
@@ -824,7 +848,7 @@ export async function execute(
       for (const line of lines) {
         const b = await balance(tx, warehouse.id, line.variantId, "variant");
         const reserve = Decimal.min(
-          num(b.onHand).minus(b.reserved),
+          num(b.onHand).minus(b.reserved).minus(b.held),
           line.quantity - line.shipped - line.reserved,
         );
         if (reserve.gt(0)) {
@@ -1304,7 +1328,7 @@ export async function execute(
           const consumed =
             v.consumption?.find((c) => c.reservationId === r.id)?.quantity ??
             r.quantity;
-          if (num(consumed).gt(num(b.onHand).minus(b.reserved).add(r.quantity)))
+          if (num(consumed).gt(num(b.onHand).minus(b.reserved).minus(b.held).add(r.quantity)))
             throw new Error("Actual consumption exceeds available materials");
           const movement = await move(
             tx,

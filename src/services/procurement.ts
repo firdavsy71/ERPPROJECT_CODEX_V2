@@ -13,6 +13,7 @@ type Item = typeof s.purchaseReceiptItems.$inferSelect;
 type Context = {
   actorId: string;
   reject: (item: Item, quantity: string, rollId?: string) => Promise<string>;
+  quality: (item: Item, accepted: string, rollId?: string, dispose?: boolean, rejected?:string) => Promise<string|null>;
 };
 
 /** Allocate each expense by received supplier value, with cumulative cent rounding. */
@@ -119,6 +120,18 @@ export async function procurementAction(
     .select()
     .from(s.purchases)
     .where(eq(s.purchases.id, receipt.orderId));
+  if(action === "disposeProcurement") {
+    const v=z.object({quantity:qty,kind:z.enum(["Supplier Return","Scrap"]),reference:z.string().trim().min(1).max(200),notes:note,rollId:z.uuid().optional().or(z.literal(""))}).parse(input);
+    if(!item.qcRequired || d(v.quantity).lte(0)) throw new Error("Only rejected material under incoming quality hold can be disposed.");
+    const inspections=await tx.select().from(s.procurementInspections).where(eq(s.procurementInspections.receiptItemId,item.id));
+    const dispositions=await tx.select().from(s.procurementDispositions).where(eq(s.procurementDispositions.receiptItemId,item.id));
+    const rejected=inspections.filter(i=>!v.rollId || i.rollId===v.rollId).reduce((sum,i)=>sum.add(i.rejected),d(0));
+    const disposed=dispositions.filter(i=>!v.rollId || i.rollId===v.rollId).reduce((sum,i)=>sum.add(i.quantity),d(0));
+    if(disposed.add(v.quantity).gt(rejected)) throw new Error("Disposition exceeds the rejected quantity still held.");
+    const movementId=await c.quality(item,v.quantity,v.rollId||undefined,true);
+    await tx.insert(s.procurementDispositions).values({receiptItemId:item.id,quantity:v.quantity,kind:v.kind,reference:v.reference,notes:v.notes,rollId:v.rollId||null,movementId:movementId!,actorId:c.actorId});
+    return;
+  }
   if (action === "recordSupplierIncident") {
     const v = z.object({ description: note }).parse(input);
     await tx
@@ -151,9 +164,9 @@ export async function procurementAction(
       throw new Error(
         "Inspection quantities exceed the uninspected received quantity.",
       );
-    if (d(v.rejected).isZero() && v.rollId)
+    if (!item.qcRequired && d(v.rejected).isZero() && v.rollId)
       throw new Error("Choose a roll only when rejecting material.");
-    const movementId = d(v.rejected).gt(0)
+    const movementId = item.qcRequired ? await c.quality(item,v.accepted,v.rollId||undefined,false,v.rejected) : d(v.rejected).gt(0)
       ? await c.reject(item, v.rejected, v.rollId || undefined)
       : null;
     const [inspection] = await tx

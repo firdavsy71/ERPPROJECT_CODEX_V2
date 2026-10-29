@@ -9,14 +9,28 @@ import {
 import { revalidatePath } from "next/cache";
 import { AuthError } from "next-auth";
 import { z } from "zod";
-export type Result = { ok: boolean; message: string; code?: "SESSION_EXPIRED" };
+import { randomUUID } from "node:crypto";
+export type Result = { ok: boolean; message: string; code?: "SESSION_EXPIRED" | "AUTH_UNAVAILABLE"; requestId?: string };
 async function run(
+  action: string,
   operation: (
     actor: NonNullable<Awaited<ReturnType<typeof currentActor>>>,
   ) => Promise<void>,
 ): Promise<Result> {
-  const actor = await currentActor();
-  if (!actor) return { ok: false, code: "SESSION_EXPIRED", message: "Your session is no longer active. Sign in again, then return here and retry." };
+  const requestId = randomUUID();
+  // Never log action arguments, operation keys, account details or exception objects.
+  const safeAction = /^[a-zA-Z]{1,60}$/.test(action) ? action : "unknown";
+  let actor;
+  try {
+    actor = await currentActor();
+  } catch {
+    console.error(JSON.stringify({event:"erp.auth",action:safeAction,requestId,category:"session_lookup_failed"}));
+    return {ok:false,code:"AUTH_UNAVAILABLE",requestId,message:"Sign-in could not be verified. Please retry shortly. Reference: " + requestId};
+  }
+  if (!actor) {
+    console.warn(JSON.stringify({event:"erp.auth",action:safeAction,requestId,category:"session_unavailable"}));
+    return { ok: false, code: "SESSION_EXPIRED", requestId, message: "Your session is no longer active. Sign in again, then return here and retry." };
+  }
   try {
     await operation(actor);
     revalidatePath("/", "layout");
@@ -43,17 +57,17 @@ export async function businessAction(
   input: unknown,
   key: string,
 ) {
-  return run((a) => execute(a, action, input, key));
+  return run(action, (a) => execute(a, action, input, key));
 }
 export async function masterAction(
   module: MasterModule,
   input: unknown,
   id?: string,
 ) {
-  return run((a) => saveMaster(a, module, input, id));
+  return run("saveMaster", (a) => saveMaster(a, module, input, id));
 }
 export async function archiveAction(module: string, id: string) {
-  return run((a) => archiveMaster(a, module, id));
+  return run("archiveMaster", (a) => archiveMaster(a, module, id));
 }
 export async function loginAction(_: Result, form: FormData): Promise<Result> {
   try {

@@ -236,6 +236,7 @@ export const balances = pgTable(
     variantId: uuid("variant_id").references(() => variants.id),
     onHand: qty("on_hand"),
     reserved: qty("reserved"),
+    held: qty("held"),
     rollTracked: boolean("roll_tracked").notNull().default(false),
   },
   (t) => [
@@ -245,7 +246,7 @@ export const balances = pgTable(
     ),
     check(
       "valid_balance",
-      sql`${t.onHand} >= 0 and ${t.reserved} >= 0 and ${t.reserved} <= ${t.onHand}`,
+      sql`${t.onHand} >= 0 and ${t.reserved} >= 0 and ${t.held} >= 0 and ${t.reserved} + ${t.held} <= ${t.onHand}`,
     ),
     uniqueIndex("material_warehouse").on(t.warehouseId, t.materialId),
     uniqueIndex("variant_warehouse").on(t.warehouseId, t.variantId),
@@ -258,6 +259,7 @@ export const movements = pgTable("inventory_movements", {
     .references(() => balances.id),
   quantity: qty("quantity"),
   reservedDelta: qty("reserved_delta"),
+  heldDelta: qty("held_delta"),
   reason: text().notNull(),
   source: text().notNull(),
   operationKey: text("operation_key").notNull().unique(),
@@ -483,6 +485,7 @@ export const purchaseReceiptItems = pgTable("purchase_receipt_items", {
   expectedDate:text("expected_date"),
   orderedAt:timestamp("ordered_at",{withTimezone:true}),
   provenance:text().notNull().default("Recorded"),
+  qcRequired:boolean("qc_required").notNull().default(true),
   createdAt:time(),
 },t=>[check("receipt_item_quantity_positive",sql`${t.quantity} > 0`),uniqueIndex("receipt_item_once").on(t.receiptId,t.purchaseItemId)]);
 export const procurementInspections = pgTable("procurement_inspections", {
@@ -492,6 +495,13 @@ export const procurementInspections = pgTable("procurement_inspections", {
   movementId:uuid("movement_id").references(()=>movements.id),
   actorId:uuid("actor_id").notNull().references(()=>users.id), createdAt:time(),
 },t=>[check("procurement_inspection_quantities",sql`${t.accepted} >= 0 and ${t.rejected} >= 0 and ${t.accepted}+${t.rejected} > 0`)]);
+export const procurementDispositions = pgTable("procurement_dispositions", {
+  id:id(), receiptItemId:uuid("receipt_item_id").notNull().references(()=>purchaseReceiptItems.id),
+  rollId:uuid("roll_id").references(()=>fabricRolls.id), quantity:qty("quantity"),
+  kind:text().notNull(), reference:text().notNull().unique(), notes:text().notNull(),
+  movementId:uuid("movement_id").notNull().unique().references(()=>movements.id),
+  actorId:uuid("actor_id").notNull().references(()=>users.id), createdAt:time(),
+},t=>[check("procurement_disposition_valid",sql`${t.quantity}>0 and ${t.kind} in ('Supplier Return','Scrap')`)]);
 export const supplierIncidents = pgTable("supplier_quality_incidents", {
   id:id(), supplierId:uuid("supplier_id").notNull().references(()=>suppliers.id),
   receiptItemId:uuid("receipt_item_id").notNull().references(()=>purchaseReceiptItems.id),
@@ -1504,6 +1514,9 @@ export const fabricRolls = pgTable(
     physicalLength: qty("physical_length"),
     remainingLength: qty("remaining_length"),
     reservedLength: qty("reserved_length"),
+    heldLength: qty("held_length"),
+    heldSegments: jsonb("held_segments").$type<FabricSegment[]>().notNull().default([]),
+    uninspectedSegments: jsonb("uninspected_segments").$type<FabricSegment[]>().notNull().default([]),
     usableSegments: jsonb("usable_segments")
       .$type<FabricSegment[]>()
       .notNull()
@@ -1518,7 +1531,7 @@ export const fabricRolls = pgTable(
   (t) => [
     check(
       "fabric_roll_quantities",
-      sql`${t.widthCm}>0 and ${t.receivedLength}>0 and ${t.physicalLength}>=${t.receivedLength} and ${t.remainingLength}>=0 and ${t.remainingLength}<=${t.physicalLength} and ${t.reservedLength}>=0 and ${t.reservedLength}<=${t.remainingLength}`,
+      sql`${t.widthCm}>0 and ${t.receivedLength}>0 and ${t.physicalLength}>=${t.receivedLength} and ${t.remainingLength}>=0 and ${t.remainingLength}<=${t.physicalLength} and ${t.reservedLength}>=0 and ${t.heldLength}>=0 and ${t.reservedLength}+${t.heldLength}<=${t.remainingLength}`,
     ),
     check(
       "fabric_roll_identity",

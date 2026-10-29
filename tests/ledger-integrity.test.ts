@@ -41,6 +41,8 @@ it("preserves untracked material and finished-goods movement history while allow
       kind === "material" ? eq(s.balances.materialId, itemId) : eq(s.balances.variantId, itemId),
     );
     expect(balance.rollTracked).toBe(false);
+    await expect(db().update(s.balances).set({onHand:"11"}).where(eq(s.balances.id,balance.id))).rejects.toThrow();
+    await expect(db().update(s.balances).set({held:"1"}).where(eq(s.balances.id,balance.id))).rejects.toThrow();
     const [movement] = await db().select().from(s.movements).where(eq(s.movements.balanceId, balance.id));
     await expect(db().update(s.movements).set({ quantity: "999" }).where(eq(s.movements.id, movement.id))).rejects.toThrow();
     await expect(db().delete(s.movements).where(eq(s.movements.id, movement.id))).rejects.toThrow();

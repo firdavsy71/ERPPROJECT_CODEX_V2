@@ -169,12 +169,7 @@ export default async function SupplierPerformance({
           </p>
         </div>
       </div>
-      <p>
-        Received goods enter stock immediately under the existing purchase
-        workflow. Inspect them promptly; rejected quantities are removed from
-        available stock, or blocked if already reserved or consumed.
-        Roll-tracked rejections require the actual received roll.
-      </p>
+      <p>New receipts remain held and unavailable until accepted by incoming quality control. Rejected quantities stay held until a documented supplier return or scrap. Historical receipts retain their prior treatment. Select the actual received roll for tracked fabric inspections.</p>
       <p>
         Each expense is allocated to receipt lines in proportion to received
         supplier value, in the purchase currency. Amounts are rounded
@@ -215,7 +210,7 @@ export default async function SupplierPerformance({
             },
             {
               name: "rollId",
-              label: "Received fabric roll for rejection (when tracked)",
+              label: "Received fabric roll (required when tracked)",
               type: "select",
               options: rolls.map((r) => ({
                 value: r.id,
@@ -230,6 +225,14 @@ export default async function SupplierPerformance({
             },
           ]}
         />
+        <ActionForm label="Dispose rejected material" action="disposeProcurement" fields={[
+          {name:"receiptItemId",label:"Receipt line",type:"select",required:true,options:itemOptions},
+          {name:"rollId",label:"Received fabric roll (required when tracked)",type:"select",options:rolls.map(r=>({value:r.id,label:`${r.rollNumber} · ${r.heldLength} held`}))},
+          {name:"kind",label:"Disposition",type:"select",required:true,options:[{value:"Supplier Return",label:"Supplier Return"},{value:"Scrap",label:"Scrap"}]},
+          {name:"quantity",label:"Rejected quantity to dispose",type:"number",required:true},
+          {name:"reference",label:"Unique disposition document reference",required:true},
+          {name:"notes",label:"Disposition evidence",type:"textarea",required:true},
+        ]} />
         <ActionForm
           label="Record supplier quality incident"
           action="recordSupplierIncident"

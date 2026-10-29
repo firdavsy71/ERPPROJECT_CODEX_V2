@@ -27,7 +27,7 @@ export default async function FabricRollDetail({ params }: { params: Promise<{ i
   return <>
     <div className="page-heading"><div><p className="eyebrow">FABRIC TRACEABILITY</p><h1>{roll.rollNumber}</h1><p>{material?.name} · {roll.color} · {roll.composition}</p></div><Link className="btn btn-outline" href="/fabric-rolls">All rolls</Link></div>
     <p>Supplier: {suppliers.find((x) => x.id === roll.supplierId)?.name ?? "Not recorded"} · Batch: {roll.supplierBatch || "—"} · Lot: {roll.supplierLot || "—"}</p>
-    <p>Received: {roll.receivedLength} m · Usable: {roll.remainingLength} m · Reserved: {roll.reservedLength} m · Width: {roll.widthCm} cm · Location: {roll.storageLocation}</p>
+    <p>Received: {roll.receivedLength} m · Usable: {roll.remainingLength} m · Reserved: {roll.reservedLength} m · Incoming QC hold: {roll.heldLength} m · Width: {roll.widthCm} cm · Location: {roll.storageLocation}</p>
     <p className="muted">Usable physical sections (m from roll start): {roll.usableSegments.map((x) => `${x.start}–${x.end}`).join(", ") || "None"}</p>
     {can(actor.role, "inventory") && <div className="actions">
       <ActionForm label="Record damaged section" action="damageRoll" fields={[{ name: "rollId", label: "Roll", type: "select", options: [{ value: roll.id, label: roll.rollNumber }], default: roll.id, required: true }, { name: "start", label: "Start (m from roll start)", type: "number", required: true }, { name: "end", label: "End (m from roll start)", type: "number", required: true }, { name: "reason", label: "Damage description", type: "textarea", required: true }]} />

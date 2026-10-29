@@ -8,6 +8,11 @@ export async function checkConsistency() {
       SELECT 'stock_ledger' AS check, count(*)::int AS violations FROM inventory_balances b
       WHERE b.on_hand<>(SELECT coalesce(sum(m.quantity),0) FROM inventory_movements m WHERE m.balance_id=b.id)
          OR b.reserved<>(SELECT coalesce(sum(m.reserved_delta),0) FROM inventory_movements m WHERE m.balance_id=b.id)
+         OR b.held<>(SELECT coalesce(sum(m.held_delta),0) FROM inventory_movements m WHERE m.balance_id=b.id)
+      UNION ALL
+      SELECT 'incoming_quality_holds',count(*)::int FROM inventory_balances b WHERE b.held<>(
+        SELECT coalesce(sum(i.quantity-(SELECT coalesce(sum(q.accepted),0) FROM procurement_inspections q WHERE q.receipt_item_id=i.id)-(SELECT coalesce(sum(d.quantity),0) FROM procurement_dispositions d WHERE d.receipt_item_id=i.id)),0)
+        FROM purchase_receipt_items i JOIN inventory_movements m ON m.id=i.movement_id WHERE m.balance_id=b.id AND i.qc_required)
       UNION ALL
       SELECT 'finished_reservations',count(*)::int FROM (
         SELECT b.variant_id FROM inventory_balances b WHERE b.variant_id IS NOT NULL GROUP BY b.variant_id
@@ -35,7 +40,8 @@ export async function checkConsistency() {
       UNION ALL
       SELECT 'roll_balances',count(*)::int FROM inventory_balances b WHERE b.roll_tracked AND (
         b.on_hand<>(SELECT coalesce(sum(f.remaining_length),0) FROM fabric_rolls f WHERE f.balance_id=b.id)
-        OR b.reserved<>(SELECT coalesce(sum(f.reserved_length),0) FROM fabric_rolls f WHERE f.balance_id=b.id))
+        OR b.reserved<>(SELECT coalesce(sum(f.reserved_length),0) FROM fabric_rolls f WHERE f.balance_id=b.id)
+        OR b.held<>(SELECT coalesce(sum(f.held_length),0) FROM fabric_rolls f WHERE f.balance_id=b.id))
       UNION ALL
       SELECT 'return_claims',count(*)::int FROM shipment_items si WHERE si.quantity < (
         SELECT coalesce(sum(CASE WHEN r.intake_closed THEN (SELECT coalesce(sum(p.quantity),0) FROM return_receipts p WHERE p.return_item_id=ri.id) ELSE ri.quantity END),0)

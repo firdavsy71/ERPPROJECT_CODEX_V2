@@ -97,6 +97,7 @@ export async function ManufacturingRolls({
               allocated: owned.toFixed(4),
               available: new Decimal(roll.remainingLength)
                 .minus(roll.reservedLength)
+                .minus(roll.heldLength)
                 .add(owned)
                 .toFixed(4),
             };

@@ -249,9 +249,10 @@ describe("Critical PostgreSQL workflows", () => {
       .insert(s.warehouses)
       .values({ name: "Second" })
       .returning();
-    await db()
-      .insert(s.balances)
-      .values({ warehouseId: other.id, materialId: material, onHand: "3" });
+    await db().transaction(async tx=>{
+      const [b]=await tx.insert(s.balances).values({warehouseId:other.id,materialId:material,onHand:"3"}).returning();
+      await tx.insert(s.movements).values({balanceId:b.id,quantity:"3",reservedDelta:"0",reason:"Test opening balance",source:"fixture",operationKey:randomUUID(),createdBy:actor.id});
+    });
     expect(Number((await overview()).kpis.low)).toBe(0);
     expect(canExportReport("viewer", "invoices")).toBe(false);
     expect(canExportReport("production", "invoices")).toBe(false);
@@ -271,10 +272,11 @@ describe("Critical PostgreSQL workflows", () => {
         .set({ size: "XL" })
         .where(eq(s.variants.id, variant)),
     ).rejects.toThrow();
+    await expect(db().update(s.balances).set({onHand:"4"}).where(eq(s.balances.warehouseId,other.id))).rejects.toThrow();
     expect(
       (await checkConsistency()).find((c) => c.check === "stock_ledger")
         ?.violations,
-    ).toBe(1);
+    ).toBe(0);
   });
   it("requires an explicit operational warehouse when multiple warehouses exist", async () => {
     const [second] = await db()
@@ -826,6 +828,7 @@ describe("Critical PostgreSQL workflows", () => {
       id: po.id,
       lines: [{ id: pi.id, quantity: "150" }],
     });
+    for(const item of await db().select().from(s.purchaseReceiptItems)) await act("inspectProcurement",{receiptItemId:item.id,accepted:item.quantity,rejected:"0",notes:"Incoming material passed"});
     await act("sale", {
       partyId: customer,
       currency: "UZS",

@@ -1,0 +1,1 @@
+ALTER TABLE "fabric_rolls" ADD COLUMN "uninspected_segments" jsonb DEFAULT '[]'::jsonb NOT NULL;

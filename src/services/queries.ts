@@ -24,7 +24,7 @@ export async function overview() {
  (select count(*) from sales_orders where status not in ('Shipped','Completed','Cancelled')) as pending,
  (select count(*) from manufacturing_orders where status not in ('Completed','Cancelled')) as active,
  (select count(*) from manufacturing_orders where status='Completed') as completed,
- (select count(*) from materials m where m.active and coalesce((select sum(b.on_hand-b.reserved) from inventory_balances b where b.material_id=m.id),0)<m.minimum) as low`);
+ (select count(*) from materials m where m.active and coalesce((select sum(b.on_hand-b.reserved-b.held) from inventory_balances b where b.material_id=m.id),0)<m.minimum) as low`);
       const revenue = await tx.execute(
         sql`select so.currency,coalesce(sum(i.total),0)::text as total,coalesce(sum(greatest(i.total-i.paid-(select coalesce(sum(c.amount),0) from return_credit_notes c where c.invoice_id=i.id)+(select coalesce(sum(r.amount),0) from return_refunds r where r.invoice_id=i.id),0)),0)::text as outstanding from invoices i join sales_orders so on so.id=i.order_id group by so.currency`,
       );
